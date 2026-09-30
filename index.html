@@ -782,7 +782,10 @@ const DET_THRESH = 0.2, BOX_THRESH = 0.45;
 // it without eating into tight line spacing (regression-tested on the Mac).
 const UNCLIP_RATIO = 1.6;
 
-let detSession = null, recSession = null, recChars = [], recTier = 'tiny';
+let detSession = null;
+// One recogniser, swapped whole: { tier, session, chars }.
+let recEngine = null;
+function recTier() { return recEngine ? recEngine.tier : 'tiny'; }
 
 /* When built as the single-file app, models are embedded as base64 and the
    app needs no server at all after first load. The dev build fetches them
@@ -865,6 +868,19 @@ function newSession(bytes) {
   return ort.InferenceSession.create(bytes, { executionProviders: ['wasm'] });
 }
 
+/* The recogniser is one object, not three loose globals: readLines takes a
+   snapshot of it per line, so an upgrade landing mid-document swaps the whole
+   thing at once and no line can ever be decoded with one model's output and
+   the other model's character table. */
+async function useRecogniser(tier, bytes, txt) {
+  const chars = txt.split('\n');
+  if (chars.length !== tier.chars) {
+    throw new Error('dict has ' + chars.length + ' characters, expected ' + tier.chars);
+  }
+  const session = await newSession(bytes);
+  recEngine = { tier: tier.label, session: session, chars: chars };
+}
+
 async function loadModels(onProgress) {
   ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/';
   let detBytes, tinyRecBytes, tinyDict;
@@ -875,44 +891,36 @@ async function loadModels(onProgress) {
     tinyDict = INLINE_MODELS.dict;
   } else {
     detBytes = await getBytes('models/det.onnx');
-  }
-  detSession = await newSession(detBytes);
-
-  // Bigger recogniser when it is reachable, tiny when it is not. A failure here
-  // is not worth reporting to the user: tiny is a working app, only a less
-  // accurate one.
-  const tier = REC_TIERS[REC_PREFERENCE];
-  if (tier.label !== 'tiny') {
-    try {
-      if (onProgress) onProgress('loading ' + tier.label + ' recogniser');
-      const pairs = await Promise.all([getBytes(tier.url), getText(tier.dict)]);
-      const chars = pairs[1].split('\n');
-      if (chars.length !== tier.chars) {
-        throw new Error('dict has ' + chars.length + ' characters, expected ' + tier.chars);
-      }
-      recSession = await newSession(pairs[0]);
-      recChars = chars;
-      recTier = tier.label;
-      return;
-    } catch (err) {
-      // fall through: tiny below
-    }
-  }
-
-  if (!tinyRecBytes) {
     const pairs = await Promise.all([
       getBytes(REC_TIERS.tiny.url), getText(REC_TIERS.tiny.dict)
     ]);
     tinyRecBytes = pairs[0]; tinyDict = pairs[1];
   }
-  const chars = tinyDict.split('\n');
-  if (chars.length !== REC_TIERS.tiny.chars) {
-    throw new Error('tiny dict has ' + chars.length + ' characters, expected ' + REC_TIERS.tiny.chars);
-  }
+  detSession = await newSession(detBytes);
   if (onProgress) onProgress('loading recogniser');
-  recSession = await newSession(tinyRecBytes);
-  recChars = chars;
-  recTier = 'tiny';
+  await useRecogniser(REC_TIERS.tiny, tinyRecBytes, tinyDict);
+}
+
+/* Then, if it is allowed and reachable, quietly fetch the better recogniser and
+   keep it. Loading it up front would mean a phone on cellular staring at
+   "loading" for half a minute before the camera does anything -- and it would
+   make a network hiccup look like a broken app, when the inlined weights are
+   already on the device and already work. So the app starts on tiny, upgrades
+   when it can, and the status line says which is live. */
+async function upgradeRecogniser() {
+  const tier = REC_TIERS[REC_PREFERENCE];
+  if (tier.label === 'tiny' || recTier() === tier.label) return;
+  try {
+    const pairs = await Promise.all([getBytes(tier.url), getText(tier.dict)]);
+    await useRecogniser(tier, pairs[0], pairs[1]);
+    setStatus('Ready \u00b7 ' + recTier() + ' model');
+    toast('Using the better recogniser now');
+  } catch (err) {
+    // Not worth a message: tiny works, it is just a less accurate one. Worth a
+    // console line, though, or a failed download looks like a bad model.
+    if (window.console) console.warn('keeping the tiny recogniser:', err);
+    setStatus('Ready \u00b7 tiny model');
+  }
 }
 
 function detPreprocess(canvas) {
@@ -1125,8 +1133,10 @@ function recPreprocess(crop) {
 }
 
 /* Greedy CTC: collapse repeats, drop the blank (index 0). Vocab layout is
-   blank + dict + space; verified against the model output width. */
-function ctcDecode(logits, T, V) {
+   blank + dict + space; verified against the model output width. The character
+   table is an argument rather than a global, so a line is always decoded with
+   the table that belongs to the model that produced it. */
+function ctcDecode(chars, logits, T, V) {
   let text = '', prev = -1;
   const probs = [];
   for (let t = 0; t < T; t++) {
@@ -1136,7 +1146,7 @@ function ctcDecode(logits, T, V) {
       if (val > bestV) { bestV = val; best = v; }
     }
     if (best !== prev && best !== 0) {
-      text += (best - 1 < recChars.length) ? recChars[best - 1] : ' ';
+      text += (best - 1 < chars.length) ? chars[best - 1] : ' ';
       probs.push(bestV);
     }
     prev = best;
@@ -1147,15 +1157,16 @@ function ctcDecode(logits, T, V) {
 }
 
 async function readLines(canvas, boxes) {
+  const engine = recEngine;   // one snapshot for the whole line
   const results = [];
   for (let i = 0; i < boxes.length; i++) {
     const crop = cropLine(canvas, boxes[i]);
     const feeds = {};
-    feeds[recSession.inputNames[0]] = recPreprocess(crop);
-    const out = await recSession.run(feeds);
-    const res = out[recSession.outputNames[0]];
+    feeds[engine.session.inputNames[0]] = recPreprocess(crop);
+    const out = await engine.session.run(feeds);
+    const res = out[engine.session.outputNames[0]];
     const dims = res.dims; // [1, T, V]
-    const r = ctcDecode(res.data, dims[1], dims[2]);
+    const r = ctcDecode(engine.chars, res.data, dims[1], dims[2]);
     if (r.text.trim()) {
       results.push({
         text: r.text, confidence: r.confidence,
@@ -2062,9 +2073,9 @@ $('readerStage').addEventListener('touchend', function (e) {
   try {
     await loadModels(function (msg) { setStatus(msg + '\u2026'); });
     // Which recogniser is live is worth showing: it is the difference between
-    // one wrong word in twelve and one in sixty, and it explains why the first
-    // run after a fresh install reads better than it did on the way in.
-    setStatus('Ready \u00b7 ' + recTier + ' model');
+    // one wrong word in twenty and one in two hundred.
+    setStatus('Ready \u00b7 ' + recTier() + ' model');
+    upgradeRecogniser();
   } catch (err) {
     setStatus('Model load failed \u2014 needs internet once');
     toast('Could not load OCR models');

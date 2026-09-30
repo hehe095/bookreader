@@ -67,7 +67,8 @@ own buttons are the navigation.- **Scan**: point the camera (either orientation 
   anything to read. Editing a run is deliberate: shoot, then leave. Tapping fast
   can neither start two wasm runs at once nor leave the button dead.
 - **Read**: opening the reader on a fresh run starts playing by itself; a
-  reader who was paused mid-stream stays where they were. Big button to pause,
+  reader who was paused mid-stream stays where they were. Leaving the reader
+  pauses it rather than letting the stream run on behind another screen. Big button to pause,
   `Restart`, `+10 words`, a speed slider (100–900 wpm), a text size slider, an
   **Adaptive timing** switch and a **Variation** slider.
   Under the stage, **Text read from your photos** drops down the whole thing as
@@ -169,18 +170,24 @@ the same page, under the degradations a real photo actually has:
 | all four at once | 52.8% | **32.6%** |
 
 One wrong word in twenty against one in two hundred is the difference between
-"the OCR is bad" and not noticing it, so `small` is the default. Two things keep it
-from costing anything: the **detector** stays tiny, because the small detector
-finds the same boxes for 2.7× the price, so only the recogniser is upgraded; and
-the **queue** means the reading happens behind the camera rather than in front
-of the reader. If the fetch fails, or the dict does not match the model, the app
-quietly falls back to the inlined tiny weights — a working app, just a less
-accurate one — and says so in the status line.
+"the OCR is bad" and not noticing it, so `small` is what the app wants. Three
+things keep it from costing anything: the **detector** stays tiny, because the
+small detector finds the same boxes for 2.7× the price, so only the recogniser
+is upgraded; the **queue** means the reading happens behind the camera rather
+than in front of the reader; and the app **starts on tiny and upgrades in the
+background**, so a phone on cellular never stares at "loading" for half a minute
+and a network hiccup cannot look like a broken app — the inlined weights are
+already on the device and already work. The status line always says which one is
+live. If the fetch fails, or the dict does not match the model, the app keeps
+tiny (a working app, just a less accurate one) and logs why to the console.
 
 The two recognisers do **not** share a vocabulary (6,904 characters against
 18,708), so each tier carries its own dict and the character count is checked
 before use. A mismatched pair decodes as fluent-looking nonsense, which is worse
-than failing.
+than failing — so the recogniser is a single `{ tier, session, chars }` object
+that `readLines` snapshots per line, and an upgrade mid-document swaps all three
+at once. Verified by swapping engines in the middle of a page and checking every
+decoded line still comes out as real words.
 
 Flat-field illumination correction was tried and **rejected**. It helps in three
 of the seven degradations (tiny on a hand shadow 3.3% → 1.1%, small on all four
