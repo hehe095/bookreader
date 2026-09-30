@@ -3,24 +3,38 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#0e0f13">
+<meta name="theme-color" content="#f6f3ec">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="BookReader">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icon-180.png">
 <title>BookReader</title>
 <style>
 :root {
-  --bg: #0e0f13;
-  --panel: #171a21;
-  --panel2: #232833;
-  --ink: #f2efe8;
-  --dim: #8b93a3;
-  --accent: #f5b942;
-  --danger: #f87171;
+  /* Paper and ink. One colour, used for everything that needs emphasis. */
+  --bg: #f6f3ec;
+  --panel: #fffdf8;
+  --panel2: #ece7db;
+  --ink: #23211d;
+  --dim: #7d7668;
+  --accent: #23211d;
+  --danger: #a4402f;
+  --hairline: #e0d9c9;
   --radius: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16161a;
+    --panel: #1e1e24;
+    --panel2: #27272e;
+    --ink: #eceae4;
+    --dim: #97938b;
+    --accent: #eceae4;
+    --danger: #d9755f;
+    --hairline: #2e2e35;
+  }
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body {
@@ -57,12 +71,9 @@ header h1 {
   width: 100%; height: 100%; object-fit: cover; display: block;
 }
 .guide {
-  position: absolute; inset: 8% 10%; border: 2px dashed rgba(245,185,65,.5);
-  border-radius: 10px; pointer-events: none;
-}
-.guide .spine {
-  position: absolute; left: 50%; top: 0; bottom: 0; width: 2px;
-  background: rgba(245,185,65,.65); transform: translateX(-50%);
+  position: absolute; inset: 6% 7%; border: 1px solid rgba(255,255,255,.5);
+  border-radius: 6px; pointer-events: none;
+  box-shadow: 0 0 0 1px rgba(0,0,0,.16);
 }
 .cam-placeholder {
   position: absolute; inset: 0; display: flex; align-items: center;
@@ -133,20 +144,23 @@ header h1 {
 
 /* ---------- reader view ---------- */
 .reader-stage {
-  position: relative; background: #000; border-radius: 12px;
-  min-height: 42vh; display: flex; align-items: center; justify-content: center;
-  padding: 20px 16px; overflow: hidden;
+  position: relative; background: var(--panel); border: 1px solid var(--hairline);
+  border-radius: var(--radius); min-height: 44vh; overflow: hidden;
+}
+/* The word is positioned, not centred: its pivot letter is parked on a fixed
+   column so the eye never has to hunt. No per-letter colouring. */
+.stage-word {
+  position: absolute; top: 50%; left: 32%; transform: translateY(-50%);
+  white-space: nowrap;
 }
 #wordDisplay {
+  display: inline-block; white-space: nowrap;
   font-family: "Iowan Old Style", "Charter", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
-  font-size: 76px; font-weight: 600; letter-spacing: 0.5px;
-  line-height: 1.1; text-align: center; word-break: break-word;
-  transition: font-size .15s ease;
+  font-size: 76px; font-weight: 600; letter-spacing: 0.5px; line-height: 1.15;
 }
-#wordDisplay .piv { color: var(--accent); }
 .stage-progress {
   position: absolute; left: 0; right: 0; bottom: 0; height: 5px;
-  background: rgba(255,255,255,.08);
+  background: var(--panel2);
 }
 .stage-progress i {
   display: block; height: 100%; width: 0; background: var(--accent);
@@ -154,7 +168,7 @@ header h1 {
 .stage-meta {
   position: absolute; top: 12px; left: 16px; right: 16px;
   display: flex; justify-content: space-between; font-size: 12px;
-  color: rgba(255,255,255,.35); letter-spacing: .4px;
+  color: var(--dim); letter-spacing: .4px;
 }
 .reader-controls { margin-top: 16px; }
 .slider-row {
@@ -200,19 +214,29 @@ header h1 {
 }
 
 /* ---------- nav ---------- */
-nav {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
-  background: #0e0f13;
-  border-top: 1px solid rgba(255,255,255,.08);
-  display: flex; justify-content: space-around;
-  padding: 6px 10px calc(6px + env(safe-area-inset-bottom));
-}
-nav button {
-  border: 0; background: transparent; color: var(--dim);
-  font-size: 13px; font-weight: 600; cursor: pointer;
-  padding: 10px 22px; border-radius: 8px;
-}
-nav button.on { color: var(--accent); }
+/* ---------- the paper theme's corrections to the rules above ---------- */
+.btn { transition: none; }
+.btn:active { transform: none; }
+.btn.primary { background: var(--ink); color: var(--bg); }
+.btn.primary:active { opacity: .86; }
+.btn.ghost { border-color: var(--hairline); color: var(--dim); }
+.camera-wrap { background: var(--panel2); border: 1px solid var(--hairline); }
+.seg { background: var(--panel2); }
+.seg button.on { background: var(--panel); color: var(--ink); }
+.progressbar { background: var(--panel2); }
+.progressbar i { transition: none; }
+.page-card { background: var(--panel); border: 1px solid var(--hairline); }
+.page-card canvas { background: var(--panel2); }
+.page-card .acts button { background: var(--panel2); color: var(--ink); }
+.switch { background: var(--panel2); }
+.switch.on { background: var(--ink); }
+.switch.on .knob { background: var(--bg); }
+.slider-row input[type=range] { accent-color: var(--ink); }
+.toast { background: var(--ink); color: var(--bg); transform: translateX(-50%); }
+.toast.show { transform: translateX(-50%); }
+/* No tab bar: three steps, one screen each, and the buttons in the view
+   itself are the navigation. */
+nav { display: none; }
 .toast {
   position: fixed; left: 50%; bottom: calc(96px + env(safe-area-inset-bottom));
   transform: translateX(-50%) translateY(20px);
@@ -233,14 +257,14 @@ nav button.on { color: var(--accent); }
 <section class="view active" id="view-scan">
   <div class="camera-wrap">
     <video id="video" playsinline autoplay muted></video>
-    <div class="guide"><div class="spine"></div></div>
-    <div class="cam-placeholder" id="camPlaceholder">Tap “Start camera”, or upload photos below.</div>
+    <div class="guide"></div>
+    <div class="cam-placeholder" id="camPlaceholder">Point the camera at a page, or use a photo below.</div>
   </div>
 
   <div class="row">
     <div class="seg" id="modeSeg">
       <button data-mode="auto" class="on">Auto</button>
-      <button data-mode="spread">Spread</button>
+      <button data-mode="spread">Two pages</button>
       <button data-mode="single">One page</button>
     </div>
   </div>
@@ -257,17 +281,22 @@ nav button.on { color: var(--accent); }
   </div>
 
   <div class="progressbar"><i id="procBar"></i></div>
-  <p class="hint">Hold the phone over the open book &mdash; facing pages split
-    automatically. Captures stack into one book.</p>
+  <p class="hint">Anything printed works: a book spread, a letter, a receipt.
+    Pages are found automatically and read one word at a time.</p>
+  <div class="row">
+    <button class="btn ghost" id="btnGoRead" disabled>Read</button>
+    <button class="btn ghost" id="btnGoPages" disabled>Pages</button>
+  </div>
 </section>
 
 <section class="view" id="view-pages">
   <div class="page-list" id="pageList"></div>
   <div class="row">
-    <button class="btn ghost" id="btnAddMore">Add more photos</button>
+    <button class="btn ghost" id="btnAddMore">Scan more</button>
     <button class="btn primary" id="btnRead">Read &rarr;</button>
   </div>
-  <p class="hint">Reorder with the arrows, remove with ✕.</p>
+  <p class="hint">Text is read in this order. Move or remove a page if a photo
+    came out wrong.</p>
 </section>
 
 <section class="view" id="view-read">
@@ -276,15 +305,15 @@ nav button.on { color: var(--accent); }
       <span id="metaPos">0 / 0</span>
       <span id="metaWpm">300 wpm</span>
     </div>
-    <div id="wordDisplay">&mdash;</div>
+    <div class="stage-word"><span id="wordDisplay">&mdash;</span></div>
     <div class="stage-progress"><i id="readBar"></i></div>
   </div>
 
   <div class="reader-controls">
     <div class="row">
-      <button class="btn ghost" id="btnRestart">&#8634; Start</button>
+      <button class="btn ghost" id="btnRestart">Restart</button>
       <button class="btn big primary" id="btnPlay" disabled>Play</button>
-      <button class="btn ghost" id="btnSkip">Skip +10</button>
+      <button class="btn ghost" id="btnSkip">+10 words</button>
     </div>
     <div class="slider-row">
       <label for="wpmRange">Speed</label>
@@ -299,20 +328,23 @@ nav button.on { color: var(--accent); }
     <div class="toggle-row">
       <div class="toggle-label">
         <div class="t">Adaptive timing</div>
-        <div class="s">Long words get longer, punctuation pauses &mdash; the
-          average stays at your speed</div>
+        <div class="s">Long words and sentence ends hold longer. The average
+          still lands exactly on your speed.</div>
       </div>
       <button class="switch on" id="adaptiveToggle" role="switch"
         aria-checked="true" aria-label="Adaptive timing"><span class="knob"></span></button>
     </div>
+    <div class="slider-row">
+      <label for="varRange">Variation</label>
+      <input id="varRange" type="range" min="0" max="200" step="10" value="100">
+      <div class="val" id="varVal">100%</div>
+    </div>
+    <div class="row">
+      <button class="btn ghost" id="btnBackScan">Scan more</button>
+      <button class="btn ghost" id="btnBackPages">Pages</button>
+    </div>
   </div>
 </section>
-
-<nav>
-  <button id="navScan" class="on">Scan</button>
-  <button id="navPages">Pages</button>
-  <button id="navRead">Read</button>
-</nav>
 
 <div class="toast" id="toast"></div>
 
@@ -372,17 +404,20 @@ function inkProfile(g, w, h) {
 /* The gutter is both darker and emptier than its surroundings, searched only
    near the centre so outer page margins cannot win. Rejects a split when the
    chosen column is not actually a local brightness dip. */
-function findGutter(canvas) {
+function findGutter(canvas, relaxed) {
   const gr = toGray(canvas), w = gr.w;
   const prof = inkProfile(gr.g, w, gr.h);
   const band = Math.max(3, Math.round(w * 0.015));
+  // cv2 convolves with a band-wide kernel there; the same smoothing, just
+  // written as a radius here.
+  const half = Math.max(1, Math.round(band / 2));
   function smooth(a) {
     const out = new Float32Array(w); let acc = 0;
-    for (let x = -band; x <= band; x++) acc += a[Math.min(w - 1, Math.max(0, x))];
+    for (let x = -half; x <= half; x++) acc += a[Math.min(w - 1, Math.max(0, x))];
     for (let x = 0; x < w; x++) {
-      out[x] = acc / (2 * band + 1);
-      acc -= a[Math.min(w - 1, Math.max(0, x - band))];
-      acc += a[Math.min(w - 1, Math.max(0, x + band + 1))];
+      out[x] = acc / (2 * half + 1);
+      acc -= a[Math.min(w - 1, Math.max(0, x - half))];
+      acc += a[Math.min(w - 1, Math.max(0, x + half + 1))];
     }
     return out;
   }
@@ -401,10 +436,33 @@ function findGutter(canvas) {
     const s = (1 - rb(x)) + (1 - ri(x));
     if (s > best) { best = s; split = x; }
   }
+  // Relaxed mode: only reached when the strict test found nothing. Text stops
+  // dead at a spine, so an empty column is positive evidence of two pages even
+  // when the binding shadow -- the brightness dip the strict test wants -- is
+  // absent, which is the normal case for a page photographed flat. Both sides
+  // must carry ink, so a margin can never masquerade as a gutter.
+  if (relaxed) {
+    let midInk = 0, n = 0, leftInk = 0, rightInk = 0;
+    for (let x = lo; x < hi; x++) {
+      midInk += ins[x]; n++;
+      if (x < split) leftInk += ins[x]; else rightInk += ins[x];
+    }
+    midInk /= Math.max(1, n);
+    if (midInk < 0.01) return null;
+    if (ins[split] > midInk * 0.35) return null;
+    if (leftInk / Math.max(1, split - lo) < 0.01) return null;
+    if (rightInk / Math.max(1, hi - split) < 0.01) return null;
+    return split;
+  }
+
+  // Reject if the "gutter" is not actually a local minimum of brightness:
+  // on a spread with no visible spine, the darkest column is somewhere
+  // random and splitting there would cut through text.
   const b4 = band * 4;
   let lsum = 0, ln = 0;
   for (let x = Math.max(0, split - b4); x < Math.min(w, split + b4); x++) { lsum += bs[x]; ln++; }
   if (bs[split] > (lsum / ln) * 0.995) return null;
+  // A gutter should be measurably darker than the page beside it.
   let mean = 0; for (let x = 0; x < w; x++) mean += bs[x]; mean /= w;
   if (bs[split] > mean * 0.9) return null;
   return split;
@@ -416,6 +474,116 @@ function cropTo(canvas, x0, x1) {
   const ctx = c.getContext('2d');
   ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
   ctx.drawImage(canvas, x0, 0, c.width, c.height, 0, 0, c.width, c.height);
+  return c;
+}
+
+/* Crop away the surface the page is lying on. A photo of a book or a letter is
+   mostly table, and the gutter search, the text-column estimate and the
+   detector's pixel budget all do better when the frame is paper. Detection is
+   the bright region's bounding box (Otsu, then the largest blob), which needs
+   no assumptions about what the surface looks like.
+
+   Every guard here leans towards doing nothing: cropping off a page edge is
+   unrecoverable, while a missed trim only costs a little speed. */
+function trimToContent(canvas) {
+  const maxSide = 800;
+  const scale = Math.min(1, maxSide / Math.max(canvas.width, canvas.height));
+  const w = Math.max(16, Math.round(canvas.width * scale));
+  const h = Math.max(16, Math.round(canvas.height * scale));
+  if (w * h < 10000) return canvas;
+  const small = document.createElement('canvas');
+  small.width = w; small.height = h;
+  const sctx = small.getContext('2d', { willReadFrequently: true });
+  sctx.drawImage(canvas, 0, 0, w, h);
+  const gray = toGray(small);
+  const g = gray.g;
+
+  // Paper is the bright side of a two-peaked histogram (page vs whatever it is
+  // lying on), so Otsu picks the split without a hard-coded threshold.
+  const hist = new Float32Array(256);
+  for (let i = 0; i < g.length; i++) hist[Math.min(255, g[i] | 0)]++;
+  const total = g.length;
+  let sum = 0;
+  for (let t = 0; t < 256; t++) sum += t * hist[t];
+  let sumB = 0, wB = 0, best = -1, thr = 128;
+  for (let t = 0; t < 256; t++) {
+    wB += hist[t];
+    if (!wB) continue;
+    const wF = total - wB;
+    if (!wF) break;
+    sumB += t * hist[t];
+    const mB = sumB / wB, mF = (sum - sumB) / wF;
+    const between = wB * wF * (mB - mF) * (mB - mF);
+    if (between > best) { best = between; thr = t; }
+  }
+  if (best <= 0) return canvas;
+
+  const mask = new Uint8Array(w * h), seen = new Uint8Array(w * h);
+  for (let i = 0; i < mask.length; i++) mask[i] = g[i] >= thr ? 1 : 0;
+  let bestArea = 0, bx0 = 0, by0 = 0, bx1 = w - 1, by1 = h - 1;
+  const stack = [];
+  for (let start = 0; start < mask.length; start++) {
+    if (!mask[start] || seen[start]) continue;
+    let area = 0, x0 = w, y0 = h, x1 = 0, y1 = 0;
+    seen[start] = 1; stack.push(start);
+    while (stack.length) {
+      const j = stack.pop();
+      const jx = j % w, jy = (j / w) | 0;
+      area++;
+      if (jx < x0) x0 = jx;
+      if (jx > x1) x1 = jx;
+      if (jy < y0) y0 = jy;
+      if (jy > y1) y1 = jy;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = jx + dx, ny = jy + dy;
+          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+          const k = ny * w + nx;
+          if (mask[k] && !seen[k]) { seen[k] = 1; stack.push(k); }
+        }
+      }
+    }
+    if (area > bestArea) { bestArea = area; bx0 = x0; by0 = y0; bx1 = x1; by1 = y1; }
+  }
+  if (bestArea <= 0) return canvas;
+
+  const pad = Math.max(2, Math.round(Math.min(w, h) * 0.02));
+  const cx0 = Math.max(0, bx0 - pad), cy0 = Math.max(0, by0 - pad);
+  const cx1 = Math.min(w, bx1 + 1 + pad), cy1 = Math.min(h, by1 + 1 + pad);
+
+  // Nothing to do if the page already fills the frame.
+  if (cx0 <= 1 && cy0 <= 1 && cx1 >= w - 1 && cy1 >= h - 1) return canvas;
+  // The page must be most of the frame on both axes. A blob that is only a
+  // corner of the picture is a lamp or a window, not a page.
+  if ((cx1 - cx0) < w * 0.5 || (cy1 - cy0) < h * 0.5) return canvas;
+
+  // ...and it must actually hold the ink. Without this, a bright strip of
+  // table between two text lines could win on brightness alone.
+  const bg = boxBlur(g, w, h, Math.max(4, Math.round(w * 0.015)));
+  let totalInk = 0, boxInk = 0;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      if (bg[i] - g[i] > 18) {
+        totalInk++;
+        if (x >= cx0 && x < cx1 && y >= cy0 && y < cy1) boxInk++;
+      }
+    }
+  }
+  const boxArea = (cx1 - cx0) * (cy1 - cy0);
+  if (boxInk / Math.max(1, boxArea) < 0.02) return canvas;
+  if (totalInk > 0 && boxInk < totalInk * 0.6) return canvas;
+
+  const sx = canvas.width / w, sy = canvas.height / h;
+  const ox = Math.round(cx0 * sx), oy = Math.round(cy0 * sy);
+  const ow = Math.min(canvas.width - ox, Math.round((cx1 - cx0) * sx));
+  const oh = Math.min(canvas.height - oy, Math.round((cy1 - cy0) * sy));
+  if (ow < 8 || oh < 8) return canvas;
+  const c = document.createElement('canvas');
+  c.width = ow; c.height = oh;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, ow, oh);
+  ctx.drawImage(canvas, ox, oy, ow, oh, 0, 0, ow, oh);
   return c;
 }
 
@@ -459,34 +627,55 @@ function estimateSkew(canvas, limit, step) {
   return bestAngle;
 }
 
+/* angleDeg is in estimateSkew's convention: the value it returns is exactly
+   what to pass here to level the image. The sign is load-bearing -- rotating
+   the other way doubles a tilt instead of removing it. */
 function rotateCanvas(canvas, angleDeg) {
   const c = document.createElement('canvas');
   c.width = canvas.width; c.height = canvas.height;
   const ctx = c.getContext('2d');
   ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
   ctx.translate(c.width / 2, c.height / 2);
-  ctx.rotate(-angleDeg * Math.PI / 180);
+  ctx.rotate(angleDeg * Math.PI / 180);
   ctx.translate(-c.width / 2, -c.height / 2);
   ctx.drawImage(canvas, 0, 0);
   return c;
 }
 
+/* Level a single page. This is deliberately per page and after the split:
+   resampling a whole spread first destroys the very brightness dip the gutter
+   search looks for (the strict test is a 0.5% local minimum -- measured: the
+   real gutter stops being found the moment the frame is warped), and it costs
+   a full-frame interpolation for nothing. */
+function deskewPage(page) {
+  const skew = estimateSkew(page);
+  if (Math.abs(skew) < 0.4) return page;
+  return rotateCanvas(page, skew);
+}
+
 function splitSpread(canvas, mode) {
-  // Deskew first: the gutter search and the furniture classifier both assume
-  // roughly level text. Below 0.4 degrees it is not worth an interpolation.
-  const skew = estimateSkew(canvas);
-  if (Math.abs(skew) >= 0.4) canvas = rotateCanvas(canvas, skew);
+  const frame = trimToContent(canvas);
   let split = null;
-  if (mode !== 'single') split = findGutter(canvas);
+  if (mode !== 'single') split = findGutter(frame);
+  if (split == null && mode !== 'single') split = findGutter(frame, true);
   if (split == null) {
-    if (mode === 'spread') split = Math.floor(canvas.width / 2);
-    else return [canvas];
+    if (mode === 'spread') split = Math.floor(frame.width / 2);
+    else return [deskewPage(frame)];
   }
-  return [cropTo(canvas, 0, split), cropTo(canvas, split, canvas.width)];
+  return [deskewPage(cropTo(frame, 0, split)), deskewPage(cropTo(frame, split, frame.width))];
 }
 /* ============ OCR: PP-OCRv6 tiny via onnxruntime-web (port of pipeline/ocr.py) ============ */
 const DET_MEAN = [0.485, 0.456, 0.406], DET_STD = [0.229, 0.224, 0.225];
-const DET_LIMIT_SIDE = 1600, REC_HEIGHT = 48, REC_MAX_WIDTH = 480;
+// Matches the Mac pipeline (pipeline/ocr.py). 2560 keeps body text at 20-30px
+// in detector space; below that the detector starts losing lines on a spread.
+// DET_PIX_BUDGET is the phone guard: a single whole-page photo would otherwise
+// hand the wasm heap a 5.9M-pixel tensor to chew on.
+const DET_LIMIT_SIDE = 2560, DET_PIX_BUDGET = 4.2e6, REC_HEIGHT = 48;
+// The recogniser must see the line's real shape. Clamping the width to 480
+// squashed a 1152px line into a 480px box and cost it half its characters
+// (measured: "places and the birds went quiet all at once. Somewhere behind him
+// a gate swung twice" -> "place an eid h t gt t e oneweretindtin gtesungic").
+const REC_MAX_WIDTH = 3200;
 const DET_THRESH = 0.2, BOX_THRESH = 0.45;
 // 1.4 (the config default) clips descenders -> "day" reads as "dav". 1.6 fixed
 // it without eating into tight line spacing (regression-tested on the Mac).
@@ -528,7 +717,9 @@ async function loadModels(onProgress) {
 
 function detPreprocess(canvas) {
   const w0 = canvas.width, h0 = canvas.height;
-  const ratio = Math.min(1, DET_LIMIT_SIDE / Math.max(w0, h0));
+  let ratio = Math.min(1, DET_LIMIT_SIDE / Math.max(w0, h0));
+  const budget = Math.sqrt(DET_PIX_BUDGET / Math.max(1, w0 * h0));
+  if (budget < ratio) ratio = budget;
   const rw = Math.max(32, Math.round(w0 * ratio / 32) * 32);
   const rh = Math.max(32, Math.round(h0 * ratio / 32) * 32);
   const c = document.createElement('canvas'); c.width = rw; c.height = rh;
@@ -644,8 +835,25 @@ function detPostprocess(pred, predW, predH, ratioH, ratioW, srcW, srcH) {
     };
     boxes.push(b);
   }
+  // Drop re-detections: DB sometimes fires twice on one line, and a shorter box
+  // whose centre sits inside a longer box on the same baseline is a duplicate,
+  // not a second line. Duplicate boxes duplicate text in the stream.
+  boxes.sort(function (a, b) { return b.length - a.length; });
+  const kept = [];
+  for (const b of boxes) {
+    let dup = false;
+    for (const k of kept) {
+      const dx = b.cx - k.cx, dy = b.cy - k.cy;
+      const along = dx * Math.cos(k.angle) + dy * Math.sin(k.angle);
+      const across = -dx * Math.sin(k.angle) + dy * Math.cos(k.angle);
+      if (Math.abs(along) < k.length / 2 && Math.abs(across) < k.thickness / 2 &&
+          b.length < k.length * 0.92) { dup = true; break; }
+    }
+    if (!dup) kept.push(b);
+  }
+
   // back to source-image coordinates
-  return boxes.map(function (b) {
+  return kept.map(function (b) {
     return {
       cx: Math.min(Math.max(b.cx * ratioW, 0), srcW),
       cy: Math.min(Math.max(b.cy * ratioH, 0), srcH),
@@ -678,11 +886,16 @@ function cropLine(canvas, b) {
 
 function recPreprocess(crop) {
   const w0 = crop.width, h0 = crop.height;
+  // Proportional resize, exactly like cv2.resize on the Mac: the CTC head
+  // expects the line's true shape, so the width follows from the height.
   const tw = Math.min(REC_MAX_WIDTH, Math.max(8, Math.round(w0 * REC_HEIGHT / h0)));
   const paddedW = Math.max(32, Math.ceil(tw / 32) * 32);
   const c = document.createElement('canvas'); c.width = paddedW; c.height = REC_HEIGHT;
   const ctx = c.getContext('2d', { willReadFrequently: true });
-  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, paddedW, REC_HEIGHT);
+  // Pad black on purpose: normalisation is (x/255-0.5)/0.5, so black is exactly
+  // 0.0 -- the zero padding the model trained with. White padding is +1.0, out
+  // of distribution, and the CTC head reads it back as extra glyphs.
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, paddedW, REC_HEIGHT);
   ctx.drawImage(crop, 0, 0, tw, REC_HEIGHT);
   const img = ctx.getImageData(0, 0, paddedW, REC_HEIGHT).data;
   const x = new Float32Array(3 * REC_HEIGHT * paddedW);
@@ -1047,6 +1260,12 @@ function normaliseTiming(words) {
   let mean = 0;
   for (const w of words) mean += w.scale;
   mean /= words.length;
+  // The variation control bends each weight away from (or towards) the mean
+  // before re-normalising, so variation is free: the average, and therefore the
+  // effective reading speed, still lands exactly on the chosen WPM.
+  if (state.variation !== 1) {
+    for (const w of words) w.scale = mean + (w.scale - mean) * state.variation;
+  }
   const lo = 0.55 * mean, hi = 2.9 * mean;
   let m2 = 0;
   for (const w of words) {
@@ -1062,7 +1281,7 @@ const state = {
   pages: [],           // { id, canvas, paragraphs, words, dropped }
   words: [],           // flat stream across pages
   idx: 0, playing: false, timer: null,
-  wpm: 300, fontPx: 76, mode: 'auto', adaptive: true,
+  wpm: 300, fontPx: 76, mode: 'auto', adaptive: true, variation: 1,
   stream: null, camOn: false
 };
 let camStream = null;
@@ -1076,17 +1295,27 @@ function toast(msg) {
   toastTimer = setTimeout(function () { t.classList.remove('show'); }, 2600);
 }
 
+/* One place decides what the "where to next" buttons say: both their label and
+   their disabled state depend on how much text exists. */
+function refreshNav() {
+  const n = state.words.length, p = state.pages.length;
+  $('btnGoRead').textContent = n ? 'Read ' + n + ' words' : 'Read';
+  $('btnGoRead').disabled = !n;
+  $('btnGoPages').textContent = p > 1 ? 'Pages (' + p + ')' : 'Pages';
+  $('btnGoPages').disabled = !p;
+  $('btnBackPages').textContent = p > 1 ? 'Pages (' + p + ')' : 'Pages';
+  $('btnBackPages').disabled = !p;
+  $('btnRead').disabled = !n;
+}
+
 function switchView(name) {
   for (const v of ['scan', 'pages', 'read']) {
     $('view-' + v).classList.toggle('active', v === name);
   }
-  $('navScan').classList.toggle('on', name === 'scan');
-  $('navPages').classList.toggle('on', name === 'pages');
-  $('navRead').classList.toggle('on', name === 'read');
+  // The camera keeps streaming at full power behind a hidden view, so let it go
+  // when we leave. One tap brings it back.
+  if (name !== 'scan' && state.camOn) stopCamera();
 }
-$('navScan').onclick = function () { switchView('scan'); };
-$('navPages').onclick = function () { switchView('pages'); renderPages(); };
-$('navRead').onclick = function () { switchView('read'); };
 
 /* ---- camera: environment-facing; works landscape or portrait because we
    capture the raw video frame, and orientation is baked into the frame. ---- */
@@ -1165,7 +1394,7 @@ function loadImageFile(file) {
 }
 
 /* ---- pipeline: one captured frame -> 1-2 pages of text ---- */
-async function ingestCanvas(canvas, label) {
+async function ingestCanvas(canvas, label, autoRead) {
   setStatus('Finding pages\u2026');
   const pageCanvases = splitSpread(canvas, state.mode);
   const added = [];
@@ -1192,6 +1421,13 @@ async function ingestCanvas(canvas, label) {
   const totalWords = added.reduce(function (s, p) { return s + p.words.length; }, 0);
   setStatus(state.pages.length + ' page' + (state.pages.length === 1 ? '' : 's') + ' \u00b7 ' + state.words.length + ' words');
   toast(label + ': ' + totalWords + ' words');
+  refreshNav();
+  // All-auto: the text appears and starts playing, no extra taps. A bad read is
+  // one tap from Pause, and Pages shows exactly what came out of the photo.
+  if (autoRead && state.words.length) {
+    switchView('read');
+    play(true);
+  }
 }
 
 /* Book-level furniture: a short line that repeats at the top of several pages
@@ -1226,15 +1462,15 @@ function rebuildStream() {
   normaliseTiming(state.words);
   state.idx = Math.min(state.idx, Math.max(0, state.words.length - 1));
   $('btnPlay').disabled = !state.words.length;
+  refreshNav();
 }
 
 $('btnShot').onclick = async function () {
   const frame = grabFrame();
   if (!frame) return;
   $('btnShot').disabled = true;
-  try { await ingestCanvas(frame, 'Capture'); }
+  try { await ingestCanvas(frame, 'Capture', true); }
   finally { $('btnShot').disabled = false; }
-  switchView('pages'); renderPages();
 };
 
 $('fileInput').onchange = async function (e) {
@@ -1243,11 +1479,11 @@ $('fileInput').onchange = async function (e) {
   for (let i = 0; i < files.length; i++) {
     try {
       const canvas = await loadImageFile(files[i]);
-      await ingestCanvas(canvas, files[i].name.replace(/\.[^.]+$/, ''));
+      await ingestCanvas(canvas, files[i].name.replace(/\.[^.]+$/, ''), i === files.length - 1);
     } catch (err) { toast('Could not read ' + files[i].name); }
   }
   e.target.value = '';
-  switchView('pages'); renderPages();
+  renderPages();
 };
 
 // Direct camera capture via the OS picker — works even where getUserMedia is
@@ -1257,22 +1493,37 @@ $('shotInput').onchange = async function (e) {
   if (!files.length) return;
   try {
     const canvas = await loadImageFile(files[0]);
-    await ingestCanvas(canvas, 'Photo');
-    switchView('pages'); renderPages();
+    await ingestCanvas(canvas, 'Photo', true);
+    renderPages();
   } catch (err) { toast('Could not read the photo'); }
   e.target.value = '';
 };
 
-$('btnAddMore').onclick = function () { switchView('scan'); };
-$('btnRead').onclick = function () {
+function openReader() {
   if (!state.words.length) { toast('No text yet — capture a page first'); return; }
-  switchView('read'); renderWord();
-};
+  switchView('read'); renderWord(); refreshNav();
+}
+$('btnAddMore').onclick = function () { switchView('scan'); };
+$('btnRead').onclick = function () { openReader(); };
+$('btnGoRead').onclick = function () { openReader(); };
+$('btnGoPages').onclick = function () { switchView('pages'); renderPages(); };
+$('btnBackPages').onclick = function () { switchView('pages'); renderPages(); };
+$('btnBackScan').onclick = function () { switchView('scan'); };
 
 $('adaptiveToggle').onclick = function () {
   state.adaptive = !state.adaptive;
   this.classList.toggle('on', state.adaptive);
   this.setAttribute('aria-checked', String(state.adaptive));
+  if (state.playing) scheduleNext();
+};
+
+/* How strongly the pacing curve bends. 0% is dead-steady RSVP, 100% is the
+   tuned curve, 200% is dramatic -- and because the weights are re-normalised
+   every time, the average speed stays exactly where the WPM slider says. */
+$('varRange').oninput = function (e) {
+  state.variation = parseInt(e.target.value, 10) / 100;
+  $('varVal').textContent = e.target.value + '%';
+  normaliseTiming(state.words);
   if (state.playing) scheduleNext();
 };
 
@@ -1288,7 +1539,8 @@ function renderPages() {
   const list = $('pageList');
   list.innerHTML = '';
   if (!state.pages.length) {
-    list.innerHTML = '<p class="hint">No pages yet — scan or upload photos.</p>';
+    list.innerHTML = '<p class="hint">No pages yet — scan or upload a photo.</p>';
+    refreshNav();
     return;
   }
   state.pages.forEach(function (page, i) {
@@ -1297,8 +1549,13 @@ function renderPages() {
     const thumb = document.createElement('canvas');
     thumb.width = 128; thumb.height = 168;
     const tc = thumb.getContext('2d');
-    const s = Math.max(128 / page.canvas.width, 168 / page.canvas.height);
-    tc.drawImage(page.canvas, 0, 0, 128 / s, 168 / s);
+    tc.fillStyle = '#fff'; tc.fillRect(0, 0, 128, 168);
+    // Contain, not cover: a page is taller than the thumbnail is, and the whole
+    // point of the picture is to recognise which photo this row came from.
+    const s = Math.min(128 / page.canvas.width, 168 / page.canvas.height);
+    const dw = Math.max(1, Math.round(page.canvas.width * s));
+    const dh = Math.max(1, Math.round(page.canvas.height * s));
+    tc.drawImage(page.canvas, Math.round((128 - dw) / 2), Math.round((168 - dh) / 2), dw, dh);
     const info = document.createElement('div');
     info.className = 'info';
     const preview = page.paragraphs.map(function (p) { return p.text; }).join(' ').slice(0, 90);
@@ -1307,9 +1564,9 @@ function renderPages() {
     info.querySelector('.s').textContent = preview || '(no text found)';
     const acts = document.createElement('div');
     acts.className = 'acts';
-    const up = document.createElement('button'); up.textContent = '\u25b2';
-    const down = document.createElement('button'); down.textContent = '\u25bc';
-    const del = document.createElement('button'); del.textContent = '\u2715';
+    const up = document.createElement('button'); up.textContent = 'Move up';
+    const down = document.createElement('button'); down.textContent = 'Move down';
+    const del = document.createElement('button'); del.textContent = 'Remove';
     up.onclick = function () {
       if (i > 0) { const t = state.pages[i - 1]; state.pages[i - 1] = page; state.pages[i] = t; rebuildStream(); renderPages(); }
     };
@@ -1323,29 +1580,61 @@ function renderPages() {
     card.appendChild(thumb); card.appendChild(info); card.appendChild(acts);
     list.appendChild(card);
   });
+  refreshNav();
 }
 
-/* ---- reader: black stage, ORP pivot, adaptive dwell averaging at WPM ---- */
+/* ---- reader: one plain word, pivot-parked, adaptive dwell averaging at WPM ---- */
 function renderWord() {
   const disp = $('wordDisplay');
   const words = state.words;
-  if (!words.length) { disp.textContent = '\u2014'; return; }
+  if (!words.length) { disp.textContent = '\u2014'; disp.style.transform = ''; return; }
   const w = words[state.idx];
-  disp.innerHTML = '';
-  const pivot = Math.min(w.pivot, w.text.length - 1);
-  if (pivot > 0) disp.appendChild(document.createTextNode(w.text.slice(0, pivot)));
-  const span = document.createElement('span');
-  span.className = 'piv';
-  span.textContent = w.text[pivot] || '';
-  disp.appendChild(span);
-  if (pivot + 1 < w.text.length) disp.appendChild(document.createTextNode(w.text.slice(pivot + 1)));
-  // auto-shrink for long words so nothing clips on a phone
+  if (!w) return;
+  const pivot = Math.max(0, Math.min(w.pivot, w.text.length - 1));
+  disp.textContent = '';
+  // Three spans purely so the pivot letter can be measured -- it is never
+  // coloured or decorated. No highlighting in the middle of a word.
+  const pre = document.createElement('span');
+  pre.textContent = w.text.slice(0, pivot);
+  const mid = document.createElement('span');
+  mid.textContent = w.text[pivot] || '';
+  const post = document.createElement('span');
+  post.textContent = w.text.slice(pivot + 1);
+  disp.appendChild(pre); disp.appendChild(mid); disp.appendChild(post);
+
   const len = w.text.length;
-  const px = len > 12 ? state.fontPx * 0.55 : len > 9 ? state.fontPx * 0.7 : len > 6 ? state.fontPx * 0.85 : state.fontPx;
+  const tier = len > 14 ? 0.5 : len > 12 ? 0.55 : len > 9 ? 0.7 : len > 6 ? 0.85 : 1;
+  let px = Math.round(state.fontPx * tier);
   disp.style.fontSize = px + 'px';
+  // Fit the word into the room it actually has: it may hang left of the pivot
+  // column by the width of its prefix, so the space available is measured from
+  // the word's own left edge, not from the stage's. Two passes, because the
+  // amount of overhang only settles once the font size does.
+  const stageW = $('readerStage').clientWidth;
+  // The word's left edge and the pivot's offset, both in stage coordinates:
+  // offsetLeft is relative to the offsetParent, which for these spans is the
+  // positioned .stage-word, so the anchor has to be added up. Two passes,
+  // because the pivot's overhang only settles once the font size does.
+  const anchor = disp.parentNode.offsetLeft + disp.offsetLeft;
+  if (stageW > 0) {
+    for (let pass = 0; pass < 3; pass++) {
+      const overhang = mid.offsetLeft - disp.offsetLeft;
+      const room = stageW * 0.98 - anchor + Math.min(overhang, anchor);
+      const width = disp.scrollWidth;
+      if (width <= room || px <= 18) break;
+      px = Math.max(18, Math.floor(px * room / width));
+      disp.style.fontSize = px + 'px';
+    }
+  }
+  // The pivot letter is parked on a fixed column and the word slides around it,
+  // so the landing point never moves. The shift is capped at the column itself
+  // so a long word can never slide its own first letters off the stage.
+  const off = Math.min(mid.offsetLeft - disp.offsetLeft, anchor);
+  disp.style.transform = off > 0 ? 'translateX(' + (-off) + 'px)' : '';
+
   $('metaPos').textContent = (state.idx + 1) + ' / ' + words.length;
   $('metaWpm').textContent = state.wpm + ' wpm';
-  $('readBar').style.width = (100 * state.idx / words.length) + '%';
+  $('readBar').style.width = (100 * state.idx / Math.max(1, words.length)) + '%';
 }
 
 function scheduleNext() {
@@ -1368,16 +1657,15 @@ function scheduleNext() {
   }, interval);
 }
 
-$('btnPlay').onclick = function () {
-  if (!state.words.length) return;
-  state.playing = !state.playing;
-  $('btnPlay').textContent = state.playing ? 'Pause' : 'Play';
-  if (state.playing) scheduleNext(); else clearTimeout(state.timer);
-};
+function play(on) {
+  if (!state.words.length) { state.playing = false; return; }
+  state.playing = on;
+  $('btnPlay').textContent = on ? 'Pause' : 'Play';
+  if (on) scheduleNext(); else clearTimeout(state.timer);
+}
+$('btnPlay').onclick = function () { play(!state.playing); };
 $('btnRestart').onclick = function () {
-  state.idx = 0; renderWord();
-  if (!state.playing) { state.playing = true; $('btnPlay').textContent = 'Pause'; }
-  scheduleNext();
+  state.idx = 0; renderWord(); play(true);
 };
 $('btnSkip').onclick = function () {
   state.idx = Math.min(state.idx + 10, state.words.length - 1);
@@ -1419,7 +1707,7 @@ $('readerStage').addEventListener('touchend', function (e) {
   renderWord(); renderPages();
   try {
     await loadModels(function (msg) { setStatus(msg + '\u2026'); });
-    setStatus('Ready \u00b7 PP-OCRv6 loaded');
+    setStatus('Ready');
   } catch (err) {
     setStatus('Model load failed \u2014 needs internet once');
     toast('Could not load OCR models');

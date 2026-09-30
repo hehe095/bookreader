@@ -6,7 +6,7 @@ index.html as base64, so the deployed app is ONE file (plus icon/manifest/sw).
 Opening index.html needs no server at all after the first load.
 
 Usage:  python3 build.py
-Output: index.html (~13 MB, mostly model weights)
+Output: index.html (~8.4 MB, mostly model weights)
 """
 import base64
 import json

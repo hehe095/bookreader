@@ -1,6 +1,6 @@
 /* BookReader service worker — cache everything on install so the app works
    offline (and without the Mac) from the second launch onward. */
-const CACHE = 'bookreader-v1';
+const CACHE = 'bookreader-v2';
 const ASSETS = [
   './',
   'index.html',
@@ -32,31 +32,51 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-/* Cache-first for everything we ship; network-first for the CDN runtime so
-   updates can land, but the cached copy keeps the app alive offline. */
-self.addEventListener('fetch', (event) => {
-  const url = new URL(event.request.url);
-  if (event.request.method !== 'GET') return;
+/* The app is one self-contained HTML file, so its freshness is the whole app's
+   freshness: network first, cache only when the network fails. A cache-first
+   shell would pin the installed app to whatever was deployed the day it was
+   installed — which is exactly how a shipped fix never reaches a phone. */
+async function networkFirst(request) {
+  const cache = await caches.open(CACHE);
+  try {
+    const res = await fetch(request);
+    if (res && res.ok) cache.put(request, res.clone());
+    return res;
+  } catch (e) {
+    const hit = await caches.match(request, { ignoreSearch: true });
+    if (hit) return hit;
+    throw e;
+  }
+}
 
-  if (url.origin === self.location.origin) {
-    event.respondWith(
-      caches.match(event.request).then((hit) => hit || fetch(event.request).then((res) => {
-        const copy = res.clone();
-        caches.open(CACHE).then((cache) => cache.put(event.request, copy));
-        return res;
-      }))
-    );
+/* Everything else — icons, the ONNX runtime from the CDN, the model files in a
+   dev build — is immutable or huge, so serve it from cache and quietly refresh
+   it in the background for next time. */
+async function cacheFirst(request) {
+  const hit = await caches.match(request, { ignoreSearch: true });
+  if (hit) {
+    fetch(request).then((res) => {
+      if (res && res.ok) caches.open(CACHE).then((c) => c.put(request, res.clone()));
+    }).catch(() => {});
+    return hit;
+  }
+  const res = await fetch(request);
+  if (res && res.ok) {
+    const c = await caches.open(CACHE);
+    c.put(request, res.clone());
+  }
+  return res;
+}
+
+self.addEventListener('fetch', (event) => {
+  const req = event.request;
+  if (req.method !== 'GET') return;
+  if (req.mode === 'navigate' || req.destination === 'document') {
+    event.respondWith(networkFirst(req));
     return;
   }
-
-  // onnxruntime-web CDN files
-  if (url.hostname.endsWith('jsdelivr.net')) {
-    event.respondWith(
-      caches.match(event.request).then((hit) => hit || fetch(event.request).then((res) => {
-        const copy = res.clone();
-        caches.open(CACHE).then((cache) => cache.put(event.request, copy));
-        return res;
-      }).catch(() => hit))
-    );
+  const url = new URL(req.url);
+  if (url.origin === self.location.origin || url.hostname.endsWith('jsdelivr.net')) {
+    event.respondWith(cacheFirst(req).catch(() => caches.match('./index.html')));
   }
 });
