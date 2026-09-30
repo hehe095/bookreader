@@ -1,6 +1,6 @@
 /* BookReader service worker — cache everything on install so the app works
    offline (and without the Mac) from the second launch onward. */
-const CACHE = 'bookreader-v2';
+const CACHE = 'bookreader-v3';
 const ASSETS = [
   './',
   'index.html',
@@ -50,14 +50,19 @@ async function networkFirst(request) {
 }
 
 /* Everything else — icons, the ONNX runtime from the CDN, the model files in a
-   dev build — is immutable or huge, so serve it from cache and quietly refresh
-   it in the background for next time. */
+   dev build — is immutable, so serve it from cache and quietly refresh it in
+   the background for next time. */
 async function cacheFirst(request) {
   const hit = await caches.match(request, { ignoreSearch: true });
   if (hit) {
-    fetch(request).then((res) => {
-      if (res && res.ok) caches.open(CACHE).then((c) => c.put(request, res.clone()));
-    }).catch(() => {});
+    // Except models: the recogniser tiers are 4 MB and 21 MB and a tier name
+    // always means one exact file, so there is nothing to refresh. Revalidating
+    // them re-downloaded 21 MB every single launch -- on a phone, on cellular.
+    if (!new URL(request.url).pathname.includes('/models/')) {
+      fetch(request).then((res) => {
+        if (res && res.ok) caches.open(CACHE).then((c) => c.put(request, res.clone()));
+      }).catch(() => {});
+    }
     return hit;
   }
   const res = await fetch(request);

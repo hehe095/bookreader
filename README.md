@@ -6,15 +6,20 @@ Everything runs **on the phone**, in the browser. No Mac, no server, no fees.
 
 ## Files
 
-- `index.html` — the whole app, models inlined (8.4 MB). This is the single
-  file that gets deployed.
+- `index.html` — the whole app with the tiny models inlined (8.5 MB). This is
+  the single file that gets deployed.
 - `index.src.html` — the same app without inlined models (nicer to edit).
 - `build.py` — regenerates `index.html` from `index.src.html` + `models/`.
+- `models/` — the tiny detector and recogniser inlined into `index.html`.
+- `models/small/` — the better recogniser (21 MB), fetched at runtime.
 - `sw.js`, `manifest.webmanifest`, `icon-*.png` — installable/offline support.
 
 After the first visit the service worker caches everything (including the
 onnxruntime-web CDN files), so the app opens with **no network at all** —
-camera, OCR and reader all work offline.
+camera, OCR and reader all work offline. The better recogniser is cached the
+first time it is used and is never re-fetched (the tier name means one exact
+file, so there is nothing to revalidate — and revalidating it used to pull
+21 MB again on every launch).
 
 The app shell itself is **network-first**: it fetches `index.html` when online
 and falls back to the cached copy when it is not. A cache-first shell would pin
@@ -49,15 +54,22 @@ git push -u origin main
 
 Anything printed works — a book spread, a letter, a receipt, or just the one
 paragraph you point at. There are three screens and no tab bar: each screen's
-own buttons are the navigation.
-
-- **Scan**: point the camera (either orientation — landscape works) at the
+own buttons are the navigation.- **Scan**: point the camera (either orientation — landscape works) at the
   page and tap Capture, or upload one or more photos. "Auto" looks for a spine
   and only splits when it finds one; "Two pages" forces a split down the
-  middle; "One page" skips splitting. Captures stack into one stream.
-- **Read**: the text starts playing by itself after a capture, no extra taps.
-  Big button to pause, `Restart`, `+10 words`, a speed slider (100–900 wpm), a
-  text size slider, an **Adaptive timing** switch and a **Variation** slider.
+  middle; "One page" skips splitting.
+
+  **Capture stays armed.** A tap only queues the frame; the reading happens one
+  shot at a time behind the camera, so you can page through a whole book
+  without waiting for it. The run stays in the camera until you leave it — the
+  counter under the progress bar (`3 shots · 6 pages · 1104 words · reading 2
+  more…`) and **Read**, which becomes the primary button as soon as there is
+  anything to read. Editing a run is deliberate: shoot, then leave. Tapping fast
+  can neither start two wasm runs at once nor leave the button dead.
+- **Read**: opening the reader on a fresh run starts playing by itself; a
+  reader who was paused mid-stream stays where they were. Big button to pause,
+  `Restart`, `+10 words`, a speed slider (100–900 wpm), a text size slider, an
+  **Adaptive timing** switch and a **Variation** slider.
   Under the stage, **Text read from your photos** drops down the whole thing as
   prose — tap any paragraph to start reading there.
 - **Pages**: each capture becomes one or two pages here, with what was read
@@ -96,8 +108,10 @@ python3 build.py
 
 ## Notes
 
-- OCR = PP-OCRv6 tiny (det 1.7 MB + rec 4.3 MB) run through onnxruntime-web
-  (WASM), so it works on any iPhone, no server.
+- OCR = PP-OCRv6 via onnxruntime-web (WASM), so it works on any iPhone, no
+  server. The detector is always the tiny one (1.7 MB); the recogniser is the
+  better `small` one (21 MB) when the network has it, tiny (4.3 MB, inlined)
+  when it does not. The status line says which is live.
 - The Mac pipeline in `../bookreader/` (higher-accuracy small models, 48
   tests) shares the same design: gutter split via darkness+emptiness, oriented
   text-line geometry, body-is-default furniture classifier, descender-safe
@@ -111,8 +125,8 @@ was found the hard way, and measured against the known text of the sample spread
 
 - **Give the recogniser a 2% margin around the line.** The detector's box hugs
 the dark core of a line, and a crop with no margin loses the glyphs at its
-edges. This was the biggest win of the lot: **8.7% → 1.6%** word error with the
-tiny model (and 2.7% → 0.5% with the small one). At 5% it starts welding words
+edges. This was the biggest win of the lot: **8.7% → 1.1%** word error with the
+tiny model (and 2.7% → 0.0% with the small one). At 5% it starts welding words
 together (`and it` → `andit`), so 2% is what ships. It is also what "missing
 letters, mis-spelled" was: the letters were being cut off before the recogniser
 ever saw them.
@@ -138,36 +152,78 @@ used to duplicate lines of text in the stream.
 
 ### Which model
 
-Both PP-OCRv6 sizes were measured on the same crops, same code, only the model
-swapped (word error against the reference, 2% crop margin):
+The sample spread is a flat, evenly lit render, and on input like that the tiny
+recogniser sits at 1.6% word error — near its floor, which is why an earlier
+comparison on clean crops concluded the bigger model bought nothing. A phone
+photo is not a flat render. Scoring both recognisers against the known text of
+the same page, under the degradations a real photo actually has:
 
-| recogniser | size | pad 0% | pad 2% |
-|---|---|---|---|
-| tiny (ships) | 4.3 MB | 8.70% | **1.63%** |
-| small | 20 MB | 2.72% | **0.54%** |
+| degradation | tiny | small |
+|---|---|---|
+| straight on | 1.1% | **0.0%** |
+| uneven light | 2.2% | **0.5%** |
+| hand shadow across the page | 3.3% | **0.0%** |
+| out of focus | 5.5% | **0.5%** |
+| jpeg artefacts (q35) | 5.4% | **0.0%** |
+| low resolution | 4.4% | **0.5%** |
+| all four at once | 52.8% | **32.6%** |
 
-Small is better (one wrong word per page instead of three) but it is 25 MB more
-to download, roughly 3× the recognition time on every single capture, and it
-would take the single-file build from 8.4 MB to about 30 MB. The crop margin got
-5× for nothing, which is where the win was. So: tiny stays, and the Mac pipeline
-in `../bookreader/` remains the high-accuracy path (it uses the small models,
-with 48 tests behind it).
+One wrong word in twenty against one in two hundred is the difference between
+"the OCR is bad" and not noticing it, so `small` is the default. Two things keep it
+from costing anything: the **detector** stays tiny, because the small detector
+finds the same boxes for 2.7× the price, so only the recogniser is upgraded; and
+the **queue** means the reading happens behind the camera rather than in front
+of the reader. If the fetch fails, or the dict does not match the model, the app
+quietly falls back to the inlined tiny weights — a working app, just a less
+accurate one — and says so in the status line.
+
+The two recognisers do **not** share a vocabulary (6,904 characters against
+18,708), so each tier carries its own dict and the character count is checked
+before use. A mismatched pair decodes as fluent-looking nonsense, which is worse
+than failing.
+
+Flat-field illumination correction was tried and **rejected**. It helps in three
+of the seven degradations (tiny on a hand shadow 3.3% → 1.1%, small on all four
+at once 32.6% → 24.5%) and hurts in three (low-res 4.4% → 5.5%, and the tiny
+clean case 1.1% → 1.6%), because dividing out the background also divides in the
+noise. No variant beat leaving the pixels alone on average, so it is not in the
+code.
+
+Two URL switches, both for comparing models on the same photo:
+
+- `?tier=tiny` — pin the small recogniser off.
+- `?models=https://…/` — load the model files from somewhere else.
 
 ### Recognising a paragraph, not just a spread
 
-Splitting needs positive evidence, in either of two forms: a brightness dip (the
-binding shadow) or a genuinely empty vertical channel with text on both sides.
-Both then require text on both sides that is dense enough and wide enough to be
-pages — and, in the shadow case, that most rows of text do **not** run straight
-through the candidate column.
+**Structure first, shadow second.** The gutter is the column a page opens at,
+and the first thing asked of it is whether it is a run of columns that no text
+row crosses, with page-like text on both sides. That is what a gutter *is*, with
+or without a binding shadow. Only when there is no such channel does the search
+fall back to the darkest column — the curved-spine case, where the dark band
+still has text bled into it.
 
-That is exactly what a spine is and what everything else is not. A paragraph
-scanned on its own is one column: its ragged right edge is empty in most rows
-but crossed by the long ones, and a shadow falling across it is crossed by
-*every* row. Neither is a spine, so neither splits — verified on a rendered
-paragraph filling the frame and on one lying on a dark desk (which the Otsu
-trim also crops to the paper). Verified the other way too: all five sample
-spreads still split at exactly the same columns as before, and yield 368 words
-each (330 vs 332 on the asymmetric one), same reading order, running heads and
-every folio dropped. Whole spread — split, deskew, detect and recognise both
-pages — takes about 3s on an M3.
+The order matters, and getting it backwards was a real split failure. Judging on
+darkness first means ranking columns by brightness, and on a page photographed
+flat the darkest columns are *inside the text columns*, because the ink itself
+pulls down their average. The argmax then lands in the middle of a word, the
+empty-channel test finds nothing there, and the spread goes to the recogniser as
+one page — two columns interleaved. Two columns with a white gutter and no
+shadow at all used to come out as **one page**; it now comes out as two.
+
+Both paths still demand text on both sides that is dense enough and wide enough
+to be pages — and the shadow path also that most rows do **not** run straight
+through the candidate column. That is exactly what a spine is and what
+everything else is not. A paragraph scanned on its own is one column: its ragged
+right edge is empty in most rows but crossed by the long ones, and a shadow
+falling across it is crossed by *every* row. Neither is a spine, so neither
+splits.
+
+Verified both ways. One page, unchanged: a rendered paragraph filling the frame,
+the same paragraph lying on a dark desk, and a single column with a wide empty
+right margin. Two pages: two columns with a white gutter and no shadow, a
+spread with a spine shadow lying on a desk, and all five sample spreads at
+exactly the same columns as before — 368 words each (330 vs 332 on the
+asymmetric one), same reading order, running heads and every folio dropped.
+Whole spread — split, deskew, detect and recognise both pages — takes about
+2.6s with the tiny recogniser on an M3.

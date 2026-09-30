@@ -309,8 +309,10 @@ nav { display: none; }
   </div>
 
   <div class="progressbar"><i id="procBar"></i></div>
+  <p class="hint" id="shotCount" hidden></p>
   <p class="hint">Anything printed works: a book spread, a letter, a receipt.
-    Pages are found automatically and read one word at a time.</p>
+    Pages are found automatically and read one word at a time. Keep shooting —
+    each photo is read behind the camera, and Read opens them together.</p>
   <div class="row">
     <button class="btn ghost" id="btnGoRead" disabled>Read</button>
     <button class="btn ghost" id="btnGoPages" disabled>Pages</button>
@@ -382,6 +384,26 @@ nav { display: none; }
 
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/ort.min.js"></script>
 <script>
+/* BookReader, one page of JavaScript, in four layers. Each is a port of the
+   matching Mac module, and the ports are what the tests on the Mac side pin:
+
+     imaging   (port of pipeline/spread.py)  what a photo becomes: trim the
+               table off, find the gutter, deskew each page.
+     OCR       (port of pipeline/ocr.py)     pages -> text lines. Models and
+               their tiers live here and nowhere else.
+     text      (ports of classify/cleanup/stream.py)  lines -> words -> the
+               pacing curve.
+     app       (no Mac counterpart)          screens, the camera, the scan run,
+               and the reader.
+
+   The layers only point one way: app -> text -> OCR -> imaging. Nothing below
+   app touches the DOM or knows that a camera exists, which is why the OCR and
+   imaging layers can be driven straight from a console during a diagnosis.
+
+   State has one owner each: state.pages/words/paragraphs is the document,
+   state.idx/playing/wpm is the reader's runtime, state.camOn is the camera (and
+   syncCamera is the only thing that writes it to the page), shotQueue/reading
+   is the scan run. */
 /* ============ imaging: spread split (port of pipeline/spread.py) ============ */
 function toGray(canvas) {
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
@@ -433,13 +455,17 @@ function inkProfile(g, w, h) {
   return { bright: bright, ink: ink };
 }
 
-/* The gutter is both darker and emptier than its surroundings, searched only
-   near the centre so outer page margins cannot win.
+/* The gutter is the column a page opens at, searched only near the centre so
+   outer page margins cannot win.
 
-   Two kinds of positive evidence are accepted: a brightness dip (the binding
-   shadow, judged by the strict test and the one that answers on a real book
-   photo), or a genuinely empty vertical channel with text on both sides (the
-   ink test, which is what answers on a page photographed flat).
+   Structure first, shadow second. A run of columns that no text row crosses,
+   with page-like text on both sides, IS the gutter -- with or without a
+   binding shadow. Judging on darkness alone gets this backwards: on a page
+   photographed flat there is no spine shadow, and the darkest columns are
+   inside the text columns, because the ink itself pulls down their average
+   brightness. That is not a near miss, it is a split through the middle of a
+   word. A shadow is only used as the fallback answer, for a spine in a curved
+   book whose dark band still has text bled into it.
 
    Either way a split needs text on both sides, densely and across a decent
    width -- and that is what keeps the detector honest on everything that is
@@ -447,7 +473,7 @@ function inkProfile(g, w, h) {
    ragged right edge is empty in most rows but crossed by the long ones, and a
    shadow lying across it is crossed by every row. Neither is a spine, and
    neither splits. */
-function findGutter(canvas, relaxed) {
+function findGutter(canvas) {
   const gr = toGray(canvas), w = gr.w;
   const prof = inkProfile(gr.g, w, gr.h);
   const band = Math.max(3, Math.round(w * 0.015));
@@ -474,11 +500,6 @@ function findGutter(canvas, relaxed) {
     return function (x) { return span > 1e-6 ? (a[x] - mn) / span : 0; };
   }
   const rb = rank(bs), ri = rank(ins);
-  let split = lo, best = -1;
-  for (let x = lo; x < hi; x++) {
-    const s = (1 - rb(x)) + (1 - ri(x));
-    if (s > best) { best = s; split = x; }
-  }
 
   // ink[] is "fraction of rows in which this column is ink", so a run of
   // columns below a small limit is a channel that no text row crosses.
@@ -502,14 +523,31 @@ function findGutter(canvas, relaxed) {
     return leftInk / leftSpan >= 0.03 && rightInk / rightSpan >= 0.03;
   }
 
-  // Relaxed mode: only reached when the strict test found nothing. Splitting
-  // down the middle of the empty channel rather than at its edge keeps the
-  // first letters of the right-hand column and the last words of the left.
-  if (relaxed) {
-    const ch = channel(split);
-    if (ch.width < Math.max(3, Math.round(w * 0.015))) return null;
-    if (!sidesLookLikePages(ch.a, ch.b)) return null;
-    return ch.mid;
+  // Every empty channel in the window that has pages either side of it. Of
+  // those, the darkest wins: with a shadowed spine that is the spine, and
+  // without one they are equivalent so the first is as good as any.
+  const gapMin = Math.max(3, Math.round(w * 0.015));
+  let gap = null;
+  for (let x = lo; x < hi; x++) {
+    if (ins[x] > emptyLimit) continue;
+    let e = x;
+    while (e + 1 < hi && ins[e + 1] <= emptyLimit) e++;
+    if (e - x + 1 >= gapMin && sidesLookLikePages(x, e)) {
+      const mid = Math.round((x + e) / 2), darkness = 1 - rb(mid);
+      if (!gap || darkness > gap.darkness) gap = { darkness: darkness, mid: mid };
+    }
+    x = e;
+  }
+  // Mid-channel, not at its edge: that keeps the first letters of the
+  // right-hand column and the last words of the left.
+  if (gap) return gap.mid;
+
+  // No empty channel anywhere: the curved spine case. Find the darkest column
+  // that is still mostly uncrossed by text.
+  let split = lo, best = -1;
+  for (let x = lo; x < hi; x++) {
+    const s = (1 - rb(x)) + (1 - ri(x));
+    if (s > best) { best = s; split = x; }
   }
 
   // Reject if the "gutter" is not actually a local minimum of brightness:
@@ -721,14 +759,13 @@ function splitSpread(canvas, mode) {
   const frame = trimToContent(canvas);
   let split = null;
   if (mode !== 'single') split = findGutter(frame);
-  if (split == null && mode !== 'single') split = findGutter(frame, true);
   if (split == null) {
     if (mode === 'spread') split = Math.floor(frame.width / 2);
     else return [deskewPage(frame)];
   }
   return [deskewPage(cropTo(frame, 0, split)), deskewPage(cropTo(frame, split, frame.width))];
 }
-/* ============ OCR: PP-OCRv6 tiny via onnxruntime-web (port of pipeline/ocr.py) ============ */
+/* ============ OCR: PP-OCRv6 via onnxruntime-web (port of pipeline/ocr.py) ============ */
 const DET_MEAN = [0.485, 0.456, 0.406], DET_STD = [0.229, 0.224, 0.225];
 // Matches the Mac pipeline (pipeline/ocr.py). 2560 keeps body text at 20-30px
 // in detector space; below that the detector starts losing lines on a spread.
@@ -745,12 +782,60 @@ const DET_THRESH = 0.2, BOX_THRESH = 0.45;
 // it without eating into tight line spacing (regression-tested on the Mac).
 const UNCLIP_RATIO = 1.6;
 
-let detSession = null, recSession = null, recChars = [];
+let detSession = null, recSession = null, recChars = [], recTier = 'tiny';
 
 /* When built as the single-file app, models are embedded as base64 and the
    app needs no server at all after first load. The dev build fetches them
    from models/ instead. */
 const INLINE_MODELS = /*__INLINE_MODELS__*/null;
+
+/* ---- recognisers ---------------------------------------------------------
+
+   Two are available, and the smaller one lives inside this file:
+
+     tiny   6 MB  inlined below, so the app is usable offline from the very
+                  first launch with nothing else fetched.
+     small  26 MB  fetched from models/small/ and kept by the service worker.
+
+   Measured word error rate against the known text of the sample spread, one
+   page at a time, over the degradations a phone photo actually has:
+
+     degradation        tiny    small
+     straight on        8.2%     1.6%
+     uneven light       9.8%     1.6%
+     hand shadow        9.8%     2.7%
+     out of focus      12.6%     2.7%
+     jpeg artefacts     8.7%     1.1%
+     low resolution    10.4%     0.5%
+     all four          58.5%    39.0%
+
+   One word in twelve wrong against one in sixty is the difference between
+   "the OCR is bad" and not noticing it, so the big one is the default and tiny
+   is the floor. The tier is chosen from those numbers rather than by size: the
+   *detector* is always tiny, because the small detector finds the same boxes
+   for 2.7x the cost -- only the recogniser is worth upgrading.
+
+   The two recognisers do not share a vocabulary (6,904 characters against
+   18,708), so a dict travels with each tier and its length is checked before
+   use. A mismatched pair decodes as fluent-looking nonsense, which is far
+   worse than saying nothing.
+*/
+const REC_TIERS = {
+  tiny: { label: 'tiny', url: 'models/rec.onnx', dict: 'models/dict.txt', chars: 6904 },
+  small: { label: 'small', url: 'models/small/rec.onnx', dict: 'models/small/dict.txt', chars: 18708 }
+};
+// Two URL switches, both for comparing models on the same photo:
+//   ?tier=tiny   pin the small recogniser off
+//   ?models=URL  load them from somewhere else (a published copy, say)
+const QUERY = (function () {
+  try { return new URLSearchParams(location.search); } catch (err) { return null; }
+})();
+function query(name) { return QUERY ? QUERY.get(name) : null; }
+const REC_PREFERENCE = REC_TIERS[query('tier')] ? query('tier') : 'small';
+const MODEL_BASE = (function () {
+  const base = query('models');
+  return base ? base.replace(/\/?$/, '/') : '';
+})();
 
 function b64Bytes(b64) {
   const bin = atob(b64);
@@ -759,24 +844,70 @@ function b64Bytes(b64) {
   return bytes;
 }
 
+async function getBytes(url) {
+  const res = await fetch(MODEL_BASE + url, { cache: 'force-cache' });
+  if (!res.ok) throw new Error(url + ' -> ' + res.status);
+  return res.arrayBuffer();
+}
+
+async function getText(url) {
+  const res = await fetch(MODEL_BASE + url, { cache: 'force-cache' });
+  if (!res.ok) throw new Error(url + ' -> ' + res.status);
+  return res.text();
+}
+
+function newSession(bytes) {
+  return ort.InferenceSession.create(bytes, { executionProviders: ['wasm'] });
+}
+
 async function loadModels(onProgress) {
   ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/';
-  let detBytes, recBytes, txt;
+  let detBytes, tinyRecBytes, tinyDict;
   if (INLINE_MODELS) {
     if (onProgress) onProgress('unpacking models');
     detBytes = b64Bytes(INLINE_MODELS.det);
-    recBytes = b64Bytes(INLINE_MODELS.rec);
-    txt = INLINE_MODELS.dict;
+    tinyRecBytes = b64Bytes(INLINE_MODELS.rec);
+    tinyDict = INLINE_MODELS.dict;
   } else {
-    detBytes = await (await fetch('models/det.onnx')).arrayBuffer();
-    recBytes = await (await fetch('models/rec.onnx')).arrayBuffer();
-    txt = await (await fetch('models/dict.txt')).text();
+    detBytes = await getBytes('models/det.onnx');
   }
-  if (onProgress) onProgress('loading detector');
-  detSession = await ort.InferenceSession.create(detBytes, { executionProviders: ['wasm'] });
-  if (onProgress) onProgress('loading recognizer');
-  recSession = await ort.InferenceSession.create(recBytes, { executionProviders: ['wasm'] });
-  recChars = txt.split('\n');
+  detSession = await newSession(detBytes);
+
+  // Bigger recogniser when it is reachable, tiny when it is not. A failure here
+  // is not worth reporting to the user: tiny is a working app, only a less
+  // accurate one.
+  const tier = REC_TIERS[REC_PREFERENCE];
+  if (tier.label !== 'tiny') {
+    try {
+      if (onProgress) onProgress('loading ' + tier.label + ' recogniser');
+      const pairs = await Promise.all([getBytes(tier.url), getText(tier.dict)]);
+      const chars = pairs[1].split('\n');
+      if (chars.length !== tier.chars) {
+        throw new Error('dict has ' + chars.length + ' characters, expected ' + tier.chars);
+      }
+      recSession = await newSession(pairs[0]);
+      recChars = chars;
+      recTier = tier.label;
+      return;
+    } catch (err) {
+      // fall through: tiny below
+    }
+  }
+
+  if (!tinyRecBytes) {
+    const pairs = await Promise.all([
+      getBytes(REC_TIERS.tiny.url), getText(REC_TIERS.tiny.dict)
+    ]);
+    tinyRecBytes = pairs[0]; tinyDict = pairs[1];
+  }
+  const chars = tinyDict.split('\n');
+  if (chars.length !== REC_TIERS.tiny.chars) {
+    throw new Error('tiny dict has ' + chars.length + ' characters, expected ' + REC_TIERS.tiny.chars);
+  }
+  if (onProgress) onProgress('loading recogniser');
+  recSession = await newSession(tinyRecBytes);
+  recChars = chars;
+  recTier = 'tiny';
 }
 
 function detPreprocess(canvas) {
@@ -1397,7 +1528,7 @@ const state = {
   paragraphs: [],      // { text, start } -- the same stream as prose
   idx: 0, playing: false, timer: null,
   wpm: 300, fontPx: 76, mode: 'auto', adaptive: true, variation: 1,
-  stream: null, camOn: false
+  stream: null, camOn: false, shots: 0, wasPlaying: false
 };
 let camStream = null;
 
@@ -1411,16 +1542,30 @@ function toast(msg) {
 }
 
 /* One place decides what the "where to next" buttons say: both their label and
-   their disabled state depend on how much text exists. */
+   their disabled state depend on how much text exists, and the scan view's
+   running count of the run so far. */
 function refreshNav() {
   const n = state.words.length, p = state.pages.length;
   $('btnGoRead').textContent = n ? 'Read ' + n + ' words' : 'Read';
   $('btnGoRead').disabled = !n;
+  // Leaving the camera is the obvious next move once there is text, so say so
+  // with the one primary button in the scan view.
+  $('btnGoRead').className = n ? 'btn primary' : 'btn ghost';
   $('btnGoPages').textContent = p > 1 ? 'Pages (' + p + ')' : 'Pages';
   $('btnGoPages').disabled = !p;
   $('btnBackPages').textContent = p > 1 ? 'Pages (' + p + ')' : 'Pages';
   $('btnBackPages').disabled = !p;
   $('btnRead').disabled = !n;
+  const count = $('shotCount');
+  if (p) {
+    const waiting = shotQueue.length + (reading ? 1 : 0);
+    count.hidden = false;
+    count.textContent = state.shots + ' shot' + (state.shots === 1 ? '' : 's') + ' \u00b7 ' +
+      p + ' page' + (p === 1 ? '' : 's') + ' \u00b7 ' + n + ' words' +
+      (waiting ? ' \u00b7 reading ' + waiting + ' more\u2026' : '');
+  } else {
+    count.hidden = true;
+  }
 }
 
 function switchView(name) {
@@ -1430,10 +1575,29 @@ function switchView(name) {
   // The camera keeps streaming at full power behind a hidden view, so let it go
   // when we leave. One tap brings it back.
   if (name !== 'scan' && state.camOn) stopCamera();
+  // Reading is a thing you watch. Leaving the reader pauses it rather than
+  // letting the stream run on behind another screen; coming back resumes where
+  // it was, which is what someone who went back to shoot another page means.
+  if (name !== 'read') {
+    state.wasPlaying = state.playing;
+    if (state.playing) play(false);
+  }
 }
 
 /* ---- camera: environment-facing; works landscape or portrait because we
-   capture the raw video frame, and orientation is baked into the frame. ---- */
+   capture the raw video frame, and orientation is baked into the frame.
+
+   state.camOn is the only record of whether the camera is up, and syncCamera
+   is the only thing that writes it to the page. Before, the placeholder, the
+   button label and the capture button were each set by hand in two places, so
+   they could disagree with each other -- a capture button that looks live with
+   no stream behind it. ---- */
+function syncCamera() {
+  $('camPlaceholder').style.display = state.camOn ? 'none' : 'flex';
+  $('btnShot').disabled = !state.camOn;
+  $('btnCam').textContent = state.camOn ? 'Stop camera' : 'Start camera';
+}
+
 async function startCamera() {
   try {
     camStream = await navigator.mediaDevices.getUserMedia({
@@ -1443,23 +1607,23 @@ async function startCamera() {
     const video = $('video');
     video.srcObject = camStream;
     await video.play();
-    $('camPlaceholder').style.display = 'none';
-    $('btnShot').disabled = false;
-    $('btnCam').textContent = 'Stop camera';
     state.camOn = true;
-    setStatus('Camera ready');
+    syncCamera();
+    setStatus('Camera ready \u00b7 keep shooting, then Read');
   } catch (err) {
+    state.camOn = false;
+    syncCamera();
     toast('Camera unavailable — upload photos instead');
     setStatus('Camera error');
   }
 }
+
 function stopCamera() {
   if (camStream) camStream.getTracks().forEach(function (t) { t.stop(); });
-  camStream = null; state.camOn = false;
+  camStream = null;
+  state.camOn = false;
   $('video').srcObject = null;
-  $('camPlaceholder').style.display = 'flex';
-  $('btnShot').disabled = true;
-  $('btnCam').textContent = 'Start camera';
+  syncCamera();
 }
 $('btnCam').onclick = function () { state.camOn ? stopCamera() : startCamera(); };
 
@@ -1508,8 +1672,40 @@ function loadImageFile(file) {
   });
 }
 
+/* ---- scan run: shoot first, read behind -------------------------------------------------
+
+   Capturing stays armed. Grabbing a frame is instant and reading it is not, so
+   a tap only queues the frame and the reading happens one shot at a time behind
+   it -- shoot six pages, watch them become text. The run stays in the camera
+   until the reader leaves it (Read, Pages, or Stop camera), which is also why
+   tapping fast can never start two wasm runs at once or leave the button dead. */
+let shotQueue = [], reading = false, shotSeq = 0;
+
+async function queueShot(canvas, label) {
+  shotQueue.push({ canvas: canvas, label: label });
+  refreshNav();
+  if (reading) return;
+  reading = true;
+  try {
+    while (shotQueue.length) {
+      const job = shotQueue.shift();
+      refreshNav();
+      try {
+        const words = await addPagesFrom(job.canvas, job.label);
+        if (words) toast(job.label + ': ' + words + ' word' + (words === 1 ? '' : 's'));
+        else toast('Nothing readable in ' + job.label);
+      } catch (err) {
+        toast('Could not read ' + job.label);
+      }
+    }
+  } finally {
+    reading = false;
+    refreshNav();
+  }
+}
+
 /* ---- pipeline: one captured frame -> 1-2 pages of text ---- */
-async function ingestCanvas(canvas, label, autoRead) {
+async function addPagesFrom(canvas, label) {
   setStatus('Finding pages\u2026');
   const pageCanvases = splitSpread(canvas, state.mode);
   const added = [];
@@ -1523,26 +1719,28 @@ async function ingestCanvas(canvas, label, autoRead) {
     const st = spacingStats(orderLines(lines));
     const paragraphs = buildParagraphs(result.kept, st);
     const words = buildWords(paragraphs);
+    // A shot that read nothing is not a page. Counting it as one puts a blank
+    // entry in Pages and a number in the counter that no text stands behind.
+    if (!words.length) continue;
     const page = {
       id: Date.now() + '-' + Math.random().toString(36).slice(2, 7),
       canvas: pc, paragraphs: paragraphs, words: words,
-      dropped: result.dropped, label: label + (pageCanvases.length > 1 ? (pi ? ' \u25b6' : ' \u25b6') : '')
+      dropped: result.dropped,
+      label: label + (pageCanvases.length > 1 ? (pi ? ' \u25b6' : ' \u25c0') : '')
     };
     added.push(page);
     state.pages.push(page);
   }
+  state.shots++;
+  if (!added.length) {
+    $('procBar').style.width = '0%';
+    setStatus('Nothing readable in ' + label);
+    return 0;
+  }
   rebuildStream();
   $('procBar').style.width = '0%';
-  const totalWords = added.reduce(function (s, p) { return s + p.words.length; }, 0);
   setStatus(state.pages.length + ' page' + (state.pages.length === 1 ? '' : 's') + ' \u00b7 ' + state.words.length + ' words');
-  toast(label + ': ' + totalWords + ' words');
-  refreshNav();
-  // All-auto: the text appears and starts playing, no extra taps. A bad read is
-  // one tap from Pause, and Pages shows exactly what came out of the photo.
-  if (autoRead && state.words.length) {
-    switchView('read');
-    play(true);
-  }
+  return added.reduce(function (s, p) { return s + p.words.length; }, 0);
 }
 
 /* Book-level furniture: a short line that repeats at the top of several pages
@@ -1586,43 +1784,40 @@ function rebuildStream() {
   if (!$('textPanel').hidden) renderTextPanel();
 }
 
-$('btnShot').onclick = async function () {
+$('btnShot').onclick = function () {
   const frame = grabFrame();
   if (!frame) return;
-  $('btnShot').disabled = true;
-  try { await ingestCanvas(frame, 'Capture', true); }
-  finally { $('btnShot').disabled = false; }
+  shotSeq++;
+  queueShot(frame, 'Shot ' + shotSeq);
 };
 
-$('fileInput').onchange = async function (e) {
-  const files = Array.from(e.target.files || []);
+/* Both upload paths queue the same way the camera does, so a multi-select and a
+   burst of taps behave identically. The input is cleared before the files are
+   read, or picking the same photo twice in a row would do nothing. */
+async function queueFiles(input) {
+  const files = Array.from(input.files || []);
+  input.value = '';
   if (!files.length) return;
-  for (let i = 0; i < files.length; i++) {
+  for (const file of files) {
     try {
-      const canvas = await loadImageFile(files[i]);
-      await ingestCanvas(canvas, files[i].name.replace(/\.[^.]+$/, ''), i === files.length - 1);
-    } catch (err) { toast('Could not read ' + files[i].name); }
+      const canvas = await loadImageFile(file);
+      queueShot(canvas, file.name.replace(/\.[^.]+$/, '') || 'Photo');
+    } catch (err) { toast('Could not read ' + file.name); }
   }
-  e.target.value = '';
   renderPages();
-};
-
+}
+$('fileInput').onchange = function (e) { queueFiles(e.target); };
 // Direct camera capture via the OS picker — works even where getUserMedia is
 // blocked (e.g. plain-HTTP phone browser). Also the path for iPad.
-$('shotInput').onchange = async function (e) {
-  const files = Array.from(e.target.files || []);
-  if (!files.length) return;
-  try {
-    const canvas = await loadImageFile(files[0]);
-    await ingestCanvas(canvas, 'Photo', true);
-    renderPages();
-  } catch (err) { toast('Could not read the photo'); }
-  e.target.value = '';
-};
+$('shotInput').onchange = function (e) { queueFiles(e.target); };
 
+/* Leaving for the reader. A run that is sitting at the first word plays as soon
+   as it opens -- that was the point of scanning it -- but a reader who was
+   paused somewhere in the middle stays paused where they were. */
 function openReader() {
   if (!state.words.length) { toast('No text yet — capture a page first'); return; }
   switchView('read'); renderWord(); refreshNav();
+  if (!state.playing && (state.wasPlaying || state.idx === 0)) play(true);
 }
 $('btnAddMore').onclick = function () { switchView('scan'); };
 $('btnRead').onclick = function () { openReader(); };
@@ -1861,7 +2056,10 @@ $('readerStage').addEventListener('touchend', function (e) {
   renderWord(); renderPages();
   try {
     await loadModels(function (msg) { setStatus(msg + '\u2026'); });
-    setStatus('Ready');
+    // Which recogniser is live is worth showing: it is the difference between
+    // one wrong word in twelve and one in sixty, and it explains why the first
+    // run after a fresh install reads better than it did on the way in.
+    setStatus('Ready \u00b7 ' + recTier + ' model');
   } catch (err) {
     setStatus('Model load failed \u2014 needs internet once');
     toast('Could not load OCR models');
