@@ -1,0 +1,1430 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0e0f13">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="BookReader">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<title>BookReader</title>
+<style>
+:root {
+  --bg: #0e0f13;
+  --panel: #171a21;
+  --panel2: #232833;
+  --ink: #f2efe8;
+  --dim: #8b93a3;
+  --accent: #f5b942;
+  --danger: #f87171;
+  --radius: 10px;
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body {
+  margin: 0; padding: 0; background: var(--bg); color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+  overscroll-behavior: none;
+}
+body {
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: calc(76px + env(safe-area-inset-bottom));
+  min-height: 100vh;
+}
+header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 20px 10px;
+}
+header h1 {
+  margin: 0; font-size: 20px; letter-spacing: -0.2px;
+  font-weight: 700;
+}
+.status {
+  font-size: 12.5px; color: var(--dim); max-width: 55%;
+  text-align: right; line-height: 1.35;
+}
+.view { display: none; padding: 4px 16px 24px; }
+.view.active { display: block; }
+
+/* ---------- scan view ---------- */
+.camera-wrap {
+  position: relative; border-radius: var(--radius); overflow: hidden;
+  background: #000; aspect-ratio: 4 / 3;
+}
+.camera-wrap video {
+  width: 100%; height: 100%; object-fit: cover; display: block;
+}
+.guide {
+  position: absolute; inset: 8% 10%; border: 2px dashed rgba(245,185,65,.5);
+  border-radius: 10px; pointer-events: none;
+}
+.guide .spine {
+  position: absolute; left: 50%; top: 0; bottom: 0; width: 2px;
+  background: rgba(245,185,65,.65); transform: translateX(-50%);
+}
+.cam-placeholder {
+  position: absolute; inset: 0; display: flex; align-items: center;
+  justify-content: center; color: var(--dim); font-size: 14px; text-align: center;
+  padding: 20px;
+}
+.row {
+  display: flex; gap: 10px; align-items: center; justify-content: center;
+  flex-wrap: wrap; margin: 14px 0 6px;
+}
+.btn {
+  border: 1px solid transparent; background: var(--panel2); color: var(--ink);
+  border-radius: 9px; padding: 13px 22px; font-size: 15px; font-weight: 600;
+  cursor: pointer; user-select: none; -webkit-user-select: none;
+  transition: transform .08s ease, opacity .15s;
+}
+.btn:active { transform: scale(.96); }
+.btn.primary { background: var(--accent); color: #221a05; }
+.btn.ghost { background: transparent; border-color: #2c313c; color: var(--dim); }
+.btn.big { padding: 17px 40px; font-size: 17px; }
+.btn.danger { background: transparent; border-color: var(--danger); color: var(--danger); }
+.btn:disabled { opacity: .45; }
+.seg {
+  display: inline-flex; background: var(--panel); border-radius: 10px;
+  padding: 3px; gap: 3px;
+}
+.seg button {
+  border: 0; background: transparent; color: var(--dim); border-radius: 7px;
+  padding: 9px 18px; font-size: 13.5px; font-weight: 600; cursor: pointer;
+}
+.seg button.on { background: var(--panel2); color: var(--ink); }
+.hint {
+  color: var(--dim); font-size: 12.5px; text-align: center; line-height: 1.5;
+  margin: 10px 8px 0;
+}
+.progressbar {
+  height: 6px; border-radius: 4px; background: var(--panel2);
+  overflow: hidden; margin: 12px 4px 0;
+}
+.progressbar i {
+  display: block; height: 100%; width: 0; background: var(--accent);
+  border-radius: 4px; transition: width .2s;
+}
+
+/* ---------- pages view ---------- */
+.page-list { display: flex; flex-direction: column; gap: 12px; }
+.page-card {
+  display: flex; gap: 14px; align-items: center;
+  background: var(--panel); border-radius: var(--radius); padding: 12px 14px;
+}
+.page-card canvas {
+  width: 64px; height: 84px; object-fit: cover; border-radius: 8px;
+  background: #000; flex: none;
+}
+.page-card .info { flex: 1; min-width: 0; }
+.page-card .info .t {
+  font-weight: 700; font-size: 15px;
+}
+.page-card .info .s {
+  color: var(--dim); font-size: 12px; margin-top: 3px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.page-card .acts { display: flex; flex-direction: column; gap: 6px; }
+.page-card .acts button {
+  border: 0; background: var(--panel2); color: var(--dim); border-radius: 8px;
+  padding: 6px 10px; font-size: 12px; cursor: pointer;
+}
+
+/* ---------- reader view ---------- */
+.reader-stage {
+  position: relative; background: #000; border-radius: 12px;
+  min-height: 42vh; display: flex; align-items: center; justify-content: center;
+  padding: 20px 16px; overflow: hidden;
+}
+#wordDisplay {
+  font-family: "Iowan Old Style", "Charter", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+  font-size: 76px; font-weight: 600; letter-spacing: 0.5px;
+  line-height: 1.1; text-align: center; word-break: break-word;
+  transition: font-size .15s ease;
+}
+#wordDisplay .piv { color: var(--accent); }
+.stage-progress {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 5px;
+  background: rgba(255,255,255,.08);
+}
+.stage-progress i {
+  display: block; height: 100%; width: 0; background: var(--accent);
+}
+.stage-meta {
+  position: absolute; top: 12px; left: 16px; right: 16px;
+  display: flex; justify-content: space-between; font-size: 12px;
+  color: rgba(255,255,255,.35); letter-spacing: .4px;
+}
+.reader-controls { margin-top: 16px; }
+.slider-row {
+  display: flex; align-items: center; gap: 12px; margin: 12px 6px;
+}
+.slider-row label {
+  font-size: 13px; color: var(--dim); width: 84px; flex: none;
+}
+.slider-row input[type=range] { flex: 1; accent-color: var(--accent); }
+.slider-row .val {
+  font-size: 13px; color: var(--ink); width: 72px; text-align: right;
+  font-variant-numeric: tabular-nums; flex: none;
+}
+.toggle-row {
+  display: flex; align-items: center; gap: 14px; margin: 18px 6px 4px;
+}
+.toggle-row .toggle-label { flex: 1; min-width: 0; }
+.toggle-row .t { font-size: 15px; font-weight: 600; }
+.toggle-row .s { font-size: 12px; color: var(--dim); margin-top: 3px; line-height: 1.4; }
+.switch {
+  flex: none; width: 52px; height: 31px; border-radius: 16px; border: 0;
+  background: #2c3342; position: relative; cursor: pointer; padding: 0;
+  transition: background .18s ease;
+}
+.switch .knob {
+  position: absolute; top: 2px; left: 2px; width: 27px; height: 27px;
+  border-radius: 50%; background: #fff; transition: transform .18s ease;
+}
+.switch.on { background: var(--accent); }
+.switch.on .knob { transform: translateX(21px); }
+
+/* landscape: tighter chrome, wider camera */
+@media (orientation: landscape) and (max-height: 560px) {
+  header { padding: 10px 20px 4px; }
+  header h1 { font-size: 17px; }
+  .camera-wrap { aspect-ratio: 16 / 9; }
+  .reader-stage { min-height: 36vh; }
+  .hint { margin-top: 6px; }
+}
+/* iPad and small laptops: one centered column */
+@media (min-width: 780px) {
+  header, .view { max-width: 720px; margin-left: auto; margin-right: auto; }
+}
+
+/* ---------- nav ---------- */
+nav {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
+  background: #0e0f13;
+  border-top: 1px solid rgba(255,255,255,.08);
+  display: flex; justify-content: space-around;
+  padding: 6px 10px calc(6px + env(safe-area-inset-bottom));
+}
+nav button {
+  border: 0; background: transparent; color: var(--dim);
+  font-size: 13px; font-weight: 600; cursor: pointer;
+  padding: 10px 22px; border-radius: 8px;
+}
+nav button.on { color: var(--accent); }
+.toast {
+  position: fixed; left: 50%; bottom: calc(96px + env(safe-area-inset-bottom));
+  transform: translateX(-50%) translateY(20px);
+  background: var(--panel2); color: var(--ink);  padding: 11px 20px;
+  border-radius: 10px; font-size: 13.5px; opacity: 0; pointer-events: none;
+  transition: all .25s; z-index: 50; max-width: 82vw; text-align: center;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>BookReader</h1>
+  <div class="status" id="status">Loading&hellip;</div>
+</header>
+
+<section class="view active" id="view-scan">
+  <div class="camera-wrap">
+    <video id="video" playsinline autoplay muted></video>
+    <div class="guide"><div class="spine"></div></div>
+    <div class="cam-placeholder" id="camPlaceholder">Tap “Start camera”, or upload photos below.</div>
+  </div>
+
+  <div class="row">
+    <div class="seg" id="modeSeg">
+      <button data-mode="auto" class="on">Auto</button>
+      <button data-mode="spread">Spread</button>
+      <button data-mode="single">One page</button>
+    </div>
+  </div>
+
+  <div class="row">
+    <button class="btn big primary" id="btnShot" disabled>Capture</button>
+  </div>
+  <div class="row">
+    <button class="btn ghost" id="btnCam">Start camera</button>
+    <label class="btn ghost" for="shotInput">Take photo</label>
+    <input id="shotInput" type="file" accept="image/*" capture="environment" hidden>
+    <label class="btn ghost" for="fileInput">Upload photos&hellip;</label>
+    <input id="fileInput" type="file" accept="image/*" multiple hidden>
+  </div>
+
+  <div class="progressbar"><i id="procBar"></i></div>
+  <p class="hint">Hold the phone over the open book &mdash; facing pages split
+    automatically. Captures stack into one book.</p>
+</section>
+
+<section class="view" id="view-pages">
+  <div class="page-list" id="pageList"></div>
+  <div class="row">
+    <button class="btn ghost" id="btnAddMore">Add more photos</button>
+    <button class="btn primary" id="btnRead">Read &rarr;</button>
+  </div>
+  <p class="hint">Reorder with the arrows, remove with ✕.</p>
+</section>
+
+<section class="view" id="view-read">
+  <div class="reader-stage" id="readerStage">
+    <div class="stage-meta">
+      <span id="metaPos">0 / 0</span>
+      <span id="metaWpm">300 wpm</span>
+    </div>
+    <div id="wordDisplay">&mdash;</div>
+    <div class="stage-progress"><i id="readBar"></i></div>
+  </div>
+
+  <div class="reader-controls">
+    <div class="row">
+      <button class="btn ghost" id="btnRestart">&#8634; Start</button>
+      <button class="btn big primary" id="btnPlay" disabled>Play</button>
+      <button class="btn ghost" id="btnSkip">Skip +10</button>
+    </div>
+    <div class="slider-row">
+      <label for="wpmRange">Speed</label>
+      <input id="wpmRange" type="range" min="100" max="900" step="10" value="300">
+      <div class="val" id="wpmVal">300 wpm</div>
+    </div>
+    <div class="slider-row">
+      <label for="sizeRange">Text size</label>
+      <input id="sizeRange" type="range" min="28" max="120" step="2" value="76">
+      <div class="val" id="sizeVal">76 px</div>
+    </div>
+    <div class="toggle-row">
+      <div class="toggle-label">
+        <div class="t">Adaptive timing</div>
+        <div class="s">Long words get longer, punctuation pauses &mdash; the
+          average stays at your speed</div>
+      </div>
+      <button class="switch on" id="adaptiveToggle" role="switch"
+        aria-checked="true" aria-label="Adaptive timing"><span class="knob"></span></button>
+    </div>
+  </div>
+</section>
+
+<nav>
+  <button id="navScan" class="on">Scan</button>
+  <button id="navPages">Pages</button>
+  <button id="navRead">Read</button>
+</nav>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/ort.min.js"></script>
+<script>
+/* ============ imaging: spread split (port of pipeline/spread.py) ============ */
+function toGray(canvas) {
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  const d = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const w = d.width, h = d.height, px = d.data;
+  const g = new Float32Array(w * h);
+  for (let i = 0, p = 0; i < g.length; i++, p += 4) {
+    g[i] = 0.299 * px[p] + 0.587 * px[p + 1] + 0.114 * px[p + 2];
+  }
+  return { g: g, w: w, h: h };
+}
+
+function boxBlur(src, w, h, r) {
+  const tmp = new Float32Array(w * h), out = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) {
+    let acc = 0; const row = y * w;
+    for (let x = -r; x <= r; x++) acc += src[row + Math.min(w - 1, Math.max(0, x))];
+    for (let x = 0; x < w; x++) {
+      tmp[row + x] = acc / (2 * r + 1);
+      acc -= src[row + Math.min(w - 1, Math.max(0, x - r))];
+      acc += src[row + Math.min(w - 1, Math.max(0, x + r + 1))];
+    }
+  }
+  for (let x = 0; x < w; x++) {
+    let acc = 0;
+    for (let y = -r; y <= r; y++) acc += tmp[Math.min(h - 1, Math.max(0, y)) * w + x];
+    for (let y = 0; y < h; y++) {
+      out[y * w + x] = acc / (2 * r + 1);
+      acc -= tmp[Math.min(h - 1, Math.max(0, y - r)) * w + x];
+      acc += tmp[Math.min(h - 1, Math.max(0, y + r + 1)) * w + x];
+    }
+  }
+  return out;
+}
+
+function inkProfile(g, w, h) {
+  const bg = boxBlur(g, w, h, 25);
+  const bright = new Float32Array(w), ink = new Float32Array(w);
+  for (let x = 0; x < w; x++) {
+    let sb = 0, si = 0;
+    for (let y = 0; y < h; y++) {
+      const i = y * w + x;
+      sb += g[i];
+      if (bg[i] - g[i] > 18) si++;
+    }
+    bright[x] = sb / h / 255;
+    ink[x] = si / h;
+  }
+  return { bright: bright, ink: ink };
+}
+
+/* The gutter is both darker and emptier than its surroundings, searched only
+   near the centre so outer page margins cannot win. Rejects a split when the
+   chosen column is not actually a local brightness dip. */
+function findGutter(canvas) {
+  const gr = toGray(canvas), w = gr.w;
+  const prof = inkProfile(gr.g, w, gr.h);
+  const band = Math.max(3, Math.round(w * 0.015));
+  function smooth(a) {
+    const out = new Float32Array(w); let acc = 0;
+    for (let x = -band; x <= band; x++) acc += a[Math.min(w - 1, Math.max(0, x))];
+    for (let x = 0; x < w; x++) {
+      out[x] = acc / (2 * band + 1);
+      acc -= a[Math.min(w - 1, Math.max(0, x - band))];
+      acc += a[Math.min(w - 1, Math.max(0, x + band + 1))];
+    }
+    return out;
+  }
+  const bs = smooth(prof.bright), ins = smooth(prof.ink);
+  const lo = Math.max(1, Math.floor(w * 0.25)), hi = Math.min(w - 2, Math.ceil(w * 0.75));
+  if (hi - lo < 5) return null;
+  function rank(a) {
+    let mn = Infinity, mx = -Infinity;
+    for (let x = lo; x < hi; x++) { if (a[x] < mn) mn = a[x]; if (a[x] > mx) mx = a[x]; }
+    const span = mx - mn;
+    return function (x) { return span > 1e-6 ? (a[x] - mn) / span : 0; };
+  }
+  const rb = rank(bs), ri = rank(ins);
+  let split = lo, best = -1;
+  for (let x = lo; x < hi; x++) {
+    const s = (1 - rb(x)) + (1 - ri(x));
+    if (s > best) { best = s; split = x; }
+  }
+  const b4 = band * 4;
+  let lsum = 0, ln = 0;
+  for (let x = Math.max(0, split - b4); x < Math.min(w, split + b4); x++) { lsum += bs[x]; ln++; }
+  if (bs[split] > (lsum / ln) * 0.995) return null;
+  let mean = 0; for (let x = 0; x < w; x++) mean += bs[x]; mean /= w;
+  if (bs[split] > mean * 0.9) return null;
+  return split;
+}
+
+function cropTo(canvas, x0, x1) {
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, x1 - x0); c.height = canvas.height;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+  ctx.drawImage(canvas, x0, 0, c.width, c.height, 0, 0, c.width, c.height);
+  return c;
+}
+
+/* Estimate residual rotation by maximising row-projection variance on the ink
+   mask: straight text lines sharpen the horizontal profile at 0 degrees. A
+   hand-held photo is rarely perfectly level and the gutter search (which is
+   column-wise) fails on a tilted spread. */
+function estimateSkew(canvas, limit, step) {
+  limit = limit || 6; step = step || 0.5;
+  const scale = Math.min(1, 700 / Math.max(canvas.width, canvas.height));
+  const w = Math.max(8, Math.round(canvas.width * scale));
+  const h = Math.max(8, Math.round(canvas.height * scale));
+  const small = document.createElement('canvas');
+  small.width = w; small.height = h;
+  const sctx = small.getContext('2d', { willReadFrequently: true });
+  sctx.drawImage(canvas, 0, 0, w, h);
+  const gray = toGray(small);
+  const bg = boxBlur(gray.g, w, h, Math.max(4, Math.round(w * 0.02)));
+  const pts = [];
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      if (bg[i] - gray.g[i] > 18) pts.push(x, y);
+    }
+  }
+  if (pts.length < 40) return 0;
+  const cx = w / 2, cy = h / 2;
+  let bestAngle = 0, bestScore = -1;
+  for (let angle = -limit; angle <= limit + 1e-9; angle += step) {
+    const a = angle * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
+    const bins = new Float32Array(h);
+    for (let i = 0; i < pts.length; i += 2) {
+      const dx = pts[i] - cx, dy = pts[i + 1] - cy;
+      const y2 = Math.round(cy + sa * dx + ca * dy);
+      if (y2 >= 0 && y2 < h) bins[y2]++;
+    }
+    let score = 0;
+    for (let i = 0; i < h; i++) score += bins[i] * bins[i];
+    if (score > bestScore) { bestScore = score; bestAngle = angle; }
+  }
+  return bestAngle;
+}
+
+function rotateCanvas(canvas, angleDeg) {
+  const c = document.createElement('canvas');
+  c.width = canvas.width; c.height = canvas.height;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+  ctx.translate(c.width / 2, c.height / 2);
+  ctx.rotate(-angleDeg * Math.PI / 180);
+  ctx.translate(-c.width / 2, -c.height / 2);
+  ctx.drawImage(canvas, 0, 0);
+  return c;
+}
+
+function splitSpread(canvas, mode) {
+  // Deskew first: the gutter search and the furniture classifier both assume
+  // roughly level text. Below 0.4 degrees it is not worth an interpolation.
+  const skew = estimateSkew(canvas);
+  if (Math.abs(skew) >= 0.4) canvas = rotateCanvas(canvas, skew);
+  let split = null;
+  if (mode !== 'single') split = findGutter(canvas);
+  if (split == null) {
+    if (mode === 'spread') split = Math.floor(canvas.width / 2);
+    else return [canvas];
+  }
+  return [cropTo(canvas, 0, split), cropTo(canvas, split, canvas.width)];
+}
+/* ============ OCR: PP-OCRv6 tiny via onnxruntime-web (port of pipeline/ocr.py) ============ */
+const DET_MEAN = [0.485, 0.456, 0.406], DET_STD = [0.229, 0.224, 0.225];
+const DET_LIMIT_SIDE = 1600, REC_HEIGHT = 48, REC_MAX_WIDTH = 480;
+const DET_THRESH = 0.2, BOX_THRESH = 0.45;
+// 1.4 (the config default) clips descenders -> "day" reads as "dav". 1.6 fixed
+// it without eating into tight line spacing (regression-tested on the Mac).
+const UNCLIP_RATIO = 1.6;
+
+let detSession = null, recSession = null, recChars = [];
+
+/* When built as the single-file app, models are embedded as base64 and the
+   app needs no server at all after first load. The dev build fetches them
+   from models/ instead. */
+const INLINE_MODELS = /*__INLINE_MODELS__*/null;
+
+function b64Bytes(b64) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+async function loadModels(onProgress) {
+  ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/';
+  let detBytes, recBytes, txt;
+  if (INLINE_MODELS) {
+    if (onProgress) onProgress('unpacking models');
+    detBytes = b64Bytes(INLINE_MODELS.det);
+    recBytes = b64Bytes(INLINE_MODELS.rec);
+    txt = INLINE_MODELS.dict;
+  } else {
+    detBytes = await (await fetch('models/det.onnx')).arrayBuffer();
+    recBytes = await (await fetch('models/rec.onnx')).arrayBuffer();
+    txt = await (await fetch('models/dict.txt')).text();
+  }
+  if (onProgress) onProgress('loading detector');
+  detSession = await ort.InferenceSession.create(detBytes, { executionProviders: ['wasm'] });
+  if (onProgress) onProgress('loading recognizer');
+  recSession = await ort.InferenceSession.create(recBytes, { executionProviders: ['wasm'] });
+  recChars = txt.split('\n');
+}
+
+function detPreprocess(canvas) {
+  const w0 = canvas.width, h0 = canvas.height;
+  const ratio = Math.min(1, DET_LIMIT_SIDE / Math.max(w0, h0));
+  const rw = Math.max(32, Math.round(w0 * ratio / 32) * 32);
+  const rh = Math.max(32, Math.round(h0 * ratio / 32) * 32);
+  const c = document.createElement('canvas'); c.width = rw; c.height = rh;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(canvas, 0, 0, rw, rh);
+  const img = ctx.getImageData(0, 0, rw, rh).data;
+  const x = new Float32Array(3 * rw * rh);
+  for (let i = 0, p = 0; i < rw * rh; i++, p += 4) {
+    x[i] = (img[p] / 255 - DET_MEAN[0]) / DET_STD[0];
+    x[rw * rh + i] = (img[p + 1] / 255 - DET_MEAN[1]) / DET_STD[1];
+    x[2 * rw * rh + i] = (img[p + 2] / 255 - DET_MEAN[2]) / DET_STD[2];
+  }
+  return {
+    tensor: new ort.Tensor('float32', x, [1, 3, rh, rw]),
+    ratioH: h0 / rh, ratioW: w0 / rw
+  };
+}
+
+/* Oriented geometry: PCA over a component's pixels gives the text direction,
+   so "thickness" is the printed line height. Axis-aligned extents are ruined
+   by tilt (a 660px line at 3deg reports ~50px vertical extent vs a true 27px)
+   and every spacing threshold downstream depends on this being honest. */
+function pcaBox(pts) {
+  let mx = 0, my = 0;
+  for (let i = 0; i < pts.length; i += 2) { mx += pts[i]; my += pts[i + 1]; }
+  mx /= pts.length / 2; my /= pts.length / 2;
+  let sxx = 0, syy = 0, sxy = 0;
+  for (let i = 0; i < pts.length; i += 2) {
+    const dx = pts[i] - mx, dy = pts[i + 1] - my;
+    sxx += dx * dx; syy += dy * dy; sxy += dx * dy;
+  }
+  const angle = 0.5 * Math.atan2(2 * sxy, sxx - syy);
+  const c = Math.cos(angle), s = Math.sin(angle);
+  let uMin = Infinity, uMax = -Infinity, vMin = Infinity, vMax = -Infinity;
+  for (let i = 0; i < pts.length; i += 2) {
+    const dx = pts[i] - mx, dy = pts[i + 1] - my;
+    const u = c * dx + s * dy, v = -s * dx + c * dy;
+    if (u < uMin) uMin = u; if (u > uMax) uMax = u;
+    if (v < vMin) vMin = v; if (v > vMax) vMax = v;
+  }
+  return {
+    cx: mx + c * (uMin + uMax) / 2 - s * (vMin + vMax) / 2,
+    cy: my + s * (uMin + uMax) / 2 + c * (vMin + vMax) / 2,
+    length: uMax - uMin, thickness: vMax - vMin, angle: angle
+  };
+}
+
+function cornersOf(b) {
+  const c = Math.cos(b.angle), s = Math.sin(b.angle);
+  const hx = b.length / 2, hy = b.thickness / 2;
+  return [
+    [b.cx - c * hx + s * hy, b.cy - s * hx - c * hy],
+    [b.cx + c * hx + s * hy, b.cy + s * hx - c * hy],
+    [b.cx + c * hx - s * hy, b.cy + s * hx + c * hy],
+    [b.cx - c * hx - s * hy, b.cy - s * hx + c * hy]
+  ];
+}
+
+function boxOf(pts) {
+  const b = pcaBox(pts);
+  return {
+    cx: b.cx, cy: b.cy, length: Math.max(b.length, 1),
+    thickness: Math.max(b.thickness, 1), angle: b.angle
+  };
+}
+
+/* DB postprocess: probability map -> bitmap -> connected components ->
+   oriented boxes, expanded outward so descenders survive (UNCLIP_RATIO). */
+function detPostprocess(pred, predW, predH, ratioH, ratioW, srcW, srcH) {
+  const bitmap = new Uint8Array(predW * predH);
+  for (let i = 0; i < bitmap.length; i++) bitmap[i] = pred[i] > DET_THRESH ? 1 : 0;
+  const labels = new Int32Array(predW * predH);
+  const comps = [];
+  const stack = [];
+  for (let start = 0; start < bitmap.length; start++) {
+    if (!bitmap[start] || labels[start]) continue;
+    const id = comps.length + 1;
+    const pts = [];
+    stack.push(start); labels[start] = id;
+    while (stack.length) {
+      const j = stack.pop();
+      const jx = j % predW, jy = (j / predW) | 0;
+      pts.push(jx, jy);
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = jx + dx, ny = jy + dy;
+          if (nx < 0 || ny < 0 || nx >= predW || ny >= predH) continue;
+          const k = ny * predW + nx;
+          if (bitmap[k] && !labels[k]) { labels[k] = id; stack.push(k); }
+        }
+      }
+    }
+    comps.push(pts);
+  }
+  comps.sort(function (a, b) { return b.length - a.length; });
+
+  const boxes = [];
+  for (let ci = 0; ci < Math.min(comps.length, 3000); ci++) {
+    const pts = comps[ci];
+    if (pts.length / 2 < 8) continue;
+    let b = boxOf(pts);
+    if (Math.min(b.length, b.thickness) < 5) continue;
+    // mean probability inside the box
+    let sum = 0, n = 0;
+    for (let i = 0; i < pts.length; i += 2) { sum += pred[pts[i + 1] * predW + pts[i]]; n++; }
+    if (n === 0 || sum / n < BOX_THRESH) continue;
+    // unclip: outward offset, distance = area * ratio / perimeter
+    const area = b.length * b.thickness, peri = 2 * (b.length + b.thickness);
+    const dist = area * UNCLIP_RATIO / peri;
+    b = {
+      cx: b.cx, cy: b.cy, angle: b.angle,
+      length: b.length + 2 * dist, thickness: b.thickness + 2 * dist
+    };
+    boxes.push(b);
+  }
+  // back to source-image coordinates
+  return boxes.map(function (b) {
+    return {
+      cx: Math.min(Math.max(b.cx * ratioW, 0), srcW),
+      cy: Math.min(Math.max(b.cy * ratioH, 0), srcH),
+      length: b.length * ratioW, thickness: b.thickness * ratioH, angle: b.angle
+    };
+  });
+}
+
+async function detect(canvas) {
+  const pre = detPreprocess(canvas);
+  const feeds = {};
+  feeds[detSession.inputNames[0]] = pre.tensor;
+  const out = await detSession.run(feeds);
+  const pred = out[detSession.outputNames[0]].data;
+  const dims = out[detSession.outputNames[0]].dims;
+  return detPostprocess(pred, dims[3], dims[2], pre.ratioH, pre.ratioW,
+                        canvas.width, canvas.height);
+}
+
+function cropLine(canvas, b) {
+  const w = Math.max(2, Math.round(b.length)), h = Math.max(2, Math.round(b.thickness));
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);
+  ctx.translate(w / 2, h / 2);
+  ctx.rotate(-b.angle);
+  ctx.drawImage(canvas, -b.cx, -b.cy);
+  return c;
+}
+
+function recPreprocess(crop) {
+  const w0 = crop.width, h0 = crop.height;
+  const tw = Math.min(REC_MAX_WIDTH, Math.max(8, Math.round(w0 * REC_HEIGHT / h0)));
+  const paddedW = Math.max(32, Math.ceil(tw / 32) * 32);
+  const c = document.createElement('canvas'); c.width = paddedW; c.height = REC_HEIGHT;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, paddedW, REC_HEIGHT);
+  ctx.drawImage(crop, 0, 0, tw, REC_HEIGHT);
+  const img = ctx.getImageData(0, 0, paddedW, REC_HEIGHT).data;
+  const x = new Float32Array(3 * REC_HEIGHT * paddedW);
+  const plane = REC_HEIGHT * paddedW;
+  for (let i = 0, p = 0; i < plane; i++, p += 4) {
+    x[i] = (img[p] / 255 - 0.5) / 0.5;
+    x[plane + i] = (img[p + 1] / 255 - 0.5) / 0.5;
+    x[2 * plane + i] = (img[p + 2] / 255 - 0.5) / 0.5;
+  }
+  return new ort.Tensor('float32', x, [1, 3, REC_HEIGHT, paddedW]);
+}
+
+/* Greedy CTC: collapse repeats, drop the blank (index 0). Vocab layout is
+   blank + dict + space; verified against the model output width. */
+function ctcDecode(logits, T, V) {
+  let text = '', prev = -1;
+  const probs = [];
+  for (let t = 0; t < T; t++) {
+    let best = 0, bestV = -Infinity;
+    for (let v = 0; v < V; v++) {
+      const val = logits[t * V + v];
+      if (val > bestV) { bestV = val; best = v; }
+    }
+    if (best !== prev && best !== 0) {
+      text += (best - 1 < recChars.length) ? recChars[best - 1] : ' ';
+      probs.push(bestV);
+    }
+    prev = best;
+  }
+  let conf = 0;
+  for (let i = 0; i < probs.length; i++) conf += probs[i];
+  return { text: text, confidence: probs.length ? conf / probs.length : 0 };
+}
+
+async function readLines(canvas, boxes) {
+  const results = [];
+  for (let i = 0; i < boxes.length; i++) {
+    const crop = cropLine(canvas, boxes[i]);
+    const feeds = {};
+    feeds[recSession.inputNames[0]] = recPreprocess(crop);
+    const out = await recSession.run(feeds);
+    const res = out[recSession.outputNames[0]];
+    const dims = res.dims; // [1, T, V]
+    const r = ctcDecode(res.data, dims[1], dims[2]);
+    if (r.text.trim()) {
+      results.push({
+        text: r.text, confidence: r.confidence,
+        cx: boxes[i].cx, cy: boxes[i].cy,
+        length: boxes[i].length, thickness: boxes[i].thickness,
+        angle: boxes[i].angle
+      });
+    }
+  }
+  return results;
+}
+
+async function ocrPage(canvas, onProgress) {
+  const boxes = await detect(canvas);
+  const lines = [];
+  for (let i = 0; i < boxes.length; i++) {
+    const one = await readLines(canvas, [boxes[i]]);
+    if (one.length) lines.push(one[0]);
+    if (onProgress && (i % 4 === 0 || i === boxes.length - 1)) {
+      onProgress(i + 1, boxes.length);
+    }
+    await new Promise(function (r) { setTimeout(r, 0); }); // yield to UI
+  }
+  return lines;
+}
+/* ============ text: classify + clean + timing (ports of classify/cleanup/stream) ============ */
+function lineY0(l) { return l.cy - l.thickness / 2; }
+function lineY1(l) { return l.cy + l.thickness / 2; }
+function lineX0(l) { return l.cx - l.length / 2; }
+function lineX1(l) { return l.cx + l.length / 2; }
+
+function vOverlap(a, b) {
+  const top = Math.max(lineY0(a), lineY0(b)), bot = Math.min(lineY1(a), lineY1(b));
+  if (bot <= top) return 0;
+  return (bot - top) / Math.max(Math.min(a.thickness, b.thickness), 1e-6);
+}
+
+function median(arr) {
+  if (!arr.length) return 0;
+  const s = arr.slice().sort(function (a, b) { return a - b; });
+  const m = s.length >> 1;
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+
+function orderLines(lines) {
+  const remaining = lines.slice().sort(function (a, b) { return a.cy - b.cy; });
+  const rows = [];
+  for (const line of remaining) {
+    let placed = false;
+    for (const row of rows) {
+      if (vOverlap(row[row.length - 1], line) >= 0.5) { row.push(line); placed = true; break; }
+    }
+    if (!placed) rows.push([line]);
+  }
+  rows.sort(function (a, b) {
+    return Math.min.apply(null, a.map(function (l) { return l.cy; })) -
+           Math.min.apply(null, b.map(function (l) { return l.cy; }));
+  });
+  const out = [];
+  for (const row of rows) {
+    row.sort(function (a, b) { return lineX0(a) - lineX0(b); });
+    out.push.apply(out, row);
+  }
+  return out;
+}
+
+function spacingStats(lines) {
+  if (!lines.length) return { height: 0, delta: 0 };
+  const heights = lines.map(function (l) { return l.thickness; });
+  const ordered = lines.slice().sort(function (a, b) { return a.cy - b.cy; });
+  const deltas = [];
+  for (let i = 1; i < ordered.length; i++) deltas.push(ordered[i].cy - ordered[i - 1].cy);
+  return { height: median(heights), delta: deltas.length ? median(deltas) : median(heights) };
+}
+
+function groupBlocks(lines) {
+  if (!lines.length) return [];
+  const ordered = orderLines(lines);
+  const st = spacingStats(ordered);
+  // factor 2.0 is deliberately above the ~1.5x a paragraph gap adds: treating
+  // a paragraph as its own block would let the classifier delete real text.
+  const threshold = Math.max(st.delta * 2.0, st.height * 1.4);
+  const blocks = [[ordered[0]]];
+  for (let i = 1; i < ordered.length; i++) {
+    if (ordered[i].cy - ordered[i - 1].cy > threshold) blocks.push([ordered[i]]);
+    else blocks[blocks.length - 1].push(ordered[i]);
+  }
+  return blocks;
+}
+
+const FOLIO_RE = /^[\s0-9.,\-\[\]()ivxlcdmIVXLCDM]{1,8}$/;
+function romanToInt(text) {
+  const values = { i: 1, v: 5, x: 10, l: 50, c: 100, d: 500, m: 1000 };
+  let total = 0, previous = 0;
+  for (let i = text.length - 1; i >= 0; i--) {
+    const value = values[text[i]];
+    if (value === undefined) return null;
+    if (value < previous) total -= value;
+    else { total += value; previous = value; }
+  }
+  return total > 0 && total < 4000 ? total : null;
+}
+function isFolio(text) {
+  const s = text.trim();
+  if (!s || s.length > 8 || !FOLIO_RE.test(s)) return false;
+  const compact = s.replace(/[\s.,\-\[\]()]/g, '');
+  if (!compact) return false;
+  if (/^[0-9]+$/.test(compact)) return true;
+  const lowered = compact.toLowerCase();
+  if (/^[ivxlcdm]+$/.test(lowered)) return romanToInt(lowered) !== null;
+  return false;
+}
+function alnumCount(text) {
+  let n = 0;
+  for (const ch of text) if (/[a-z0-9]/i.test(ch)) n++;
+  return n;
+}
+
+/* Body is the default; a furniture label needs positive evidence. Deleting a
+   paragraph is unrecoverable, a stray page number is minor. */
+function classifyPage(lines) {
+  const ordered = orderLines(lines);
+  const st = spacingStats(ordered);
+  const blocks = groupBlocks(ordered);
+  if (!ordered.length) return { kept: [], dropped: [] };
+
+  let body = null;
+  if (blocks.length > 2 && blocks.every(function (b) { return b.length === 1; })) {
+    body = ordered.slice(); // verse or fragmented page: keep everything
+  } else {
+    let bestScore = -1;
+    for (const b of blocks) {
+      const textLen = b.reduce(function (s, l) { return s + l.text.length; }, 0);
+      const score = b.length * 10000 + textLen;
+      if (score > bestScore) { bestScore = score; body = b; }
+    }
+    for (const b of blocks) {
+      if (b === body) continue;
+      const bLen = b.reduce(function (s, l) { return s + l.text.length; }, 0);
+      const bodyLen = body.reduce(function (s, l) { return s + l.text.length; }, 0);
+      if (body.length <= 2 && bLen > bodyLen * 1.5) body = b;
+    }
+  }
+
+  const bodySet = new Set(body);
+  const colX0 = median(body.map(lineX0)), colX1 = median(body.map(lineX1));
+  const bodyY0 = Math.min.apply(null, body.map(lineY0));
+  const bodyY1 = Math.max.apply(null, body.map(lineY1));
+  const bodyWidth = Math.max(colX1 - colX0, 1);
+  const xPad = Math.max(st.height * 2, bodyWidth * 0.03);
+  const isolated = Math.max(st.delta * 1.8, st.height * 1.3);
+
+  const kept = [], dropped = [];
+  for (const line of ordered) {
+    const inBody = bodySet.has(line);
+    const text = line.text.trim();
+    let label = 'body', reason = '';
+    if (line.confidence < 0.55) { label = 'noise'; reason = 'low confidence'; }
+    else if (alnumCount(text) < 2) { label = 'noise'; reason = 'too few characters'; }
+    else if (st.height > 0 && line.thickness < st.height * 0.45) { label = 'noise'; reason = 'far shorter than page median'; }
+    else if (isFolio(text) && (!inBody || lineX1(line) - lineX0(line) < bodyWidth * 0.25)) {
+      label = 'folio'; reason = 'page number';
+    } else {
+      const width = Math.max(lineX1(line) - lineX0(line), 1e-6);
+      let outside = 0;
+      if (lineX0(line) < colX0 - xPad) outside += Math.min(lineX1(line), colX0 - xPad) - lineX0(line);
+      if (lineX1(line) > colX1 + xPad) outside += lineX1(line) - Math.max(lineX0(line), colX1 + xPad);
+      if (Math.max(0, outside) / width > 0.6) { label = 'marginalia'; reason = 'outside the text column'; }
+      else if (!inBody) {
+        const above = lineY1(line) <= bodyY0 + st.height * 0.5;
+        const below = lineY0(line) >= bodyY1 - st.height * 0.5;
+        if (above) {
+          const gap = Math.max(0, bodyY0 - lineY1(line));
+          if (gap > isolated) { label = 'running_head'; reason = 'isolated in top margin'; }
+          else { label = 'heading'; reason = 'adjacent to body text'; }
+        } else if (below) { label = 'footer'; reason = 'below the body text'; }
+        else { label = 'body'; reason = 'inside the body column'; }
+      }
+    }
+    (label === 'body' ? kept : dropped).push({ line: line, label: label, reason: reason, text: text });
+  }
+  // Safety net for the "body is default" principle: if nearly everything was
+  // condemned, the text-column estimate is wrong (e.g. an unsplit spread with
+  // two columns), not the page. Keep the text rather than delete a chapter.
+  const furnitureShare = dropped.length / Math.max(1, kept.length + dropped.length);
+  if (furnitureShare > 0.6) {
+    for (const item of dropped) {
+      if (item.label === 'marginalia' || item.label === 'running_head' || item.label === 'heading') {
+        item.label = 'body'; item.reason = 'kept by safety rule';
+        kept.push(item);
+      }
+    }
+    kept.sort(function (a, b) { return a.line.cy - b.line.cy; });
+  }
+  return { kept: kept, dropped: dropped };
+}
+
+/* ---- cleanup: fold ligatures, join hyphenated line breaks, form paragraphs ---- */
+const LIGATURES = {
+  '\ufb00': 'ff', '\ufb01': 'fi', '\ufb02': 'fl', '\ufb03': 'ffi', '\ufb04': 'ffl',
+  '\ufb05': 'st', '\ufb06': 'st',
+  '\u2018': "'", '\u2019': "'", '\u201c': '"', '\u201d': '"',
+  '\u2013': '-', '\u2014': '-', '\u2026': '...', '\u00a0': ' ', '\u00ad': ''
+};
+const TERMINAL = ['.', '!', '?', '"', "'", ')', ']'];
+
+function normalizeText(text) {
+  for (const k in LIGATURES) text = text.split(k).join(LIGATURES[k]);
+  text = text.replace(/\s+/g, ' ');
+  text = text.replace(/\s+([,.;:!?%])/g, '$1');
+  return text.trim();
+}
+
+function endsWithHyphen(text) {
+  return /[-\u2010\u2011]$/.test(text.replace(/\s+$/, ''));
+}
+
+function joinHyphenated(left, right) {
+  if (!left) return right;
+  if (!right) return left;
+  if (endsWithHyphen(left) && right[0] && right[0].toLowerCase() === right[0] && /[a-z]/.test(right[0])) {
+    return left.replace(/\s+$/, '').slice(0, -1) + right;
+  }
+  return left + ' ' + right;
+}
+
+function buildParagraphs(items, st) {
+  if (!items.length) return [];
+  const deltas = [];
+  for (let i = 1; i < items.length; i++) deltas.push(items[i].line.cy - items[i - 1].line.cy);
+  const leftEdge = Math.min.apply(null, items.map(function (it) { return lineX0(it.line); }));
+  const deltaLimit = Math.max(st.delta * 1.3, st.height * 1.2);
+  const indentLimit = st.height * 0.9;
+
+  const breaks = [0];
+  for (let i = 1; i < items.length; i++) {
+    const delta = deltas[i - 1];
+    const indented = lineX0(items[i].line) - leftEdge > indentLimit;
+    const prev = items[i - 1].text.replace(/\s+$/, '');
+    const prevEnds = TERMINAL.indexOf(prev[prev.length - 1]) >= 0;
+    if (delta > deltaLimit && prevEnds) breaks.push(i);
+    else if (indented && delta > st.delta * 1.05) breaks.push(i);
+  }
+  breaks.push(items.length);
+
+  const paragraphs = [];
+  for (let b = 0; b + 1 < breaks.length; b++) {
+    const chunk = items.slice(breaks[b], breaks[b + 1]);
+    if (!chunk.length) continue;
+    let text = normalizeText(chunk[0].text);
+    for (let i = 1; i < chunk.length; i++) {
+      text = joinHyphenated(text, normalizeText(chunk[i].text));
+    }
+    text = normalizeText(text);
+    if (text) paragraphs.push({ text: text, lineCount: chunk.length });
+  }
+  return paragraphs;
+}
+
+/* ---- stream: pivot + adaptive dwell (port of stream.py) ----
+   Punctuation dwell is what makes RSVP feel like reading rather than a slot
+   machine. Weights are then normalised so the average word interval lands
+   exactly on the chosen WPM. */
+const PIVOT_BY_LENGTH = [[1, 0], [5, 1], [9, 2], [13, 3]];
+
+function pivotIndex(word) {
+  const letters = [];
+  for (let i = 0; i < word.length; i++) {
+    if (/[a-z0-9\u00c0-\u024f]/i.test(word[i])) letters.push(i);
+  }
+  if (!letters.length) return 0;
+  const count = letters.length;
+  for (const pair of PIVOT_BY_LENGTH) {
+    if (count <= pair[0]) return letters[Math.min(pair[1], count - 1)];
+  }
+  return letters[Math.min(4, count - 1)];
+}
+
+function delayScale(word, paragraphEnd) {
+  const s = word.trim();
+  // The per-letter term dominates: short function words flash by, long words
+  // linger. A 14-letter word gets ~4x the screen time of a 3-letter one —
+  // steeper than raw eye-tracking fixation (20-30ms/letter), which readers
+  // consistently prefer in RSVP tools over flat timing. rebuildStream()
+  // renormalises the stream so the average still equals the chosen wpm.
+  let letters = 0;
+  for (const ch of s) {
+    if (/[a-z0-9\u00c0-\u024f]/i.test(ch)) letters++;
+  }
+  let weight = 30 + 50 * letters;
+  if (/[,;:]$/.test(s)) weight *= 1.5;
+  else if (/[.!?]$/.test(s)) weight *= 2.1;
+  if (paragraphEnd) weight *= 1.35;
+  return Math.round(weight);
+}
+
+function buildWords(paragraphs) {
+  const words = [];
+  for (const para of paragraphs) {
+    const tokens = para.text.split(/\s+/).filter(Boolean);
+    for (let i = 0; i < tokens.length; i++) {
+      words.push({
+        text: tokens[i],
+        pivot: pivotIndex(tokens[i]),
+        scale: delayScale(tokens[i], i === tokens.length - 1)
+      });
+    }
+  }
+  return words;
+}
+
+/* Rescale per-word weights so their mean is exactly 1. Interval is then
+   (60000/wpm) * scale: variation is free, the average lands exactly on the
+   chosen speed. Weights are clamped first so one enormous word cannot blow
+   up the pacing and short words cannot flash by unreadably. */
+function normaliseTiming(words) {
+  if (!words.length) return;
+  let mean = 0;
+  for (const w of words) mean += w.scale;
+  mean /= words.length;
+  const lo = 0.55 * mean, hi = 2.9 * mean;
+  let m2 = 0;
+  for (const w of words) {
+    w.scale = Math.min(Math.max(w.scale, lo), hi);
+    m2 += w.scale;
+  }
+  m2 /= words.length;
+  for (const w of words) w.scale = w.scale / m2;
+}
+/* ============ app: camera, page manager, reader ============ */
+const $ = function (id) { return document.getElementById(id); };
+const state = {
+  pages: [],           // { id, canvas, paragraphs, words, dropped }
+  words: [],           // flat stream across pages
+  idx: 0, playing: false, timer: null,
+  wpm: 300, fontPx: 76, mode: 'auto', adaptive: true,
+  stream: null, camOn: false
+};
+let camStream = null;
+
+function setStatus(msg) { $('status').textContent = msg; }
+let toastTimer = null;
+function toast(msg) {
+  const t = $('toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function () { t.classList.remove('show'); }, 2600);
+}
+
+function switchView(name) {
+  for (const v of ['scan', 'pages', 'read']) {
+    $('view-' + v).classList.toggle('active', v === name);
+  }
+  $('navScan').classList.toggle('on', name === 'scan');
+  $('navPages').classList.toggle('on', name === 'pages');
+  $('navRead').classList.toggle('on', name === 'read');
+}
+$('navScan').onclick = function () { switchView('scan'); };
+$('navPages').onclick = function () { switchView('pages'); renderPages(); };
+$('navRead').onclick = function () { switchView('read'); };
+
+/* ---- camera: environment-facing; works landscape or portrait because we
+   capture the raw video frame, and orientation is baked into the frame. ---- */
+async function startCamera() {
+  try {
+    camStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 } },
+      audio: false
+    });
+    const video = $('video');
+    video.srcObject = camStream;
+    await video.play();
+    $('camPlaceholder').style.display = 'none';
+    $('btnShot').disabled = false;
+    $('btnCam').textContent = 'Stop camera';
+    state.camOn = true;
+    setStatus('Camera ready');
+  } catch (err) {
+    toast('Camera unavailable — upload photos instead');
+    setStatus('Camera error');
+  }
+}
+function stopCamera() {
+  if (camStream) camStream.getTracks().forEach(function (t) { t.stop(); });
+  camStream = null; state.camOn = false;
+  $('video').srcObject = null;
+  $('camPlaceholder').style.display = 'flex';
+  $('btnShot').disabled = true;
+  $('btnCam').textContent = 'Start camera';
+}
+$('btnCam').onclick = function () { state.camOn ? stopCamera() : startCamera(); };
+
+function grabFrame() {
+  const video = $('video');
+  if (!video.videoWidth) return null;
+  const c = document.createElement('canvas');
+  c.width = video.videoWidth; c.height = video.videoHeight;
+  c.getContext('2d').drawImage(video, 0, 0);
+  return c;
+}
+
+/* ---- image loading: EXIF orientation is applied by using <img> + drawImage,
+   so photos taken with the phone sideways come out upright. ---- */
+function loadImageFile(file) {
+  return new Promise(function (resolve, reject) {
+    // createImageBitmap honours the EXIF rotation flag, so photos shot with
+    // the phone sideways come out upright. Fallback path draws via <img>,
+    // which modern browsers also orient correctly.
+    function viaImg() {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = function () {
+        const c = document.createElement('canvas');
+        c.width = img.naturalWidth; c.height = img.naturalHeight;
+        c.getContext('2d').drawImage(img, 0, 0);
+        URL.revokeObjectURL(url);
+        resolve(c);
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('bad image')); };
+      img.src = url;
+    }
+    if (window.createImageBitmap) {
+      createImageBitmap(file, { imageOrientation: 'from-image' })
+        .then(function (bmp) {
+          const c = document.createElement('canvas');
+          c.width = bmp.width; c.height = bmp.height;
+          c.getContext('2d').drawImage(bmp, 0, 0);
+          bmp.close();
+          resolve(c);
+        })
+        .catch(viaImg);
+    } else {
+      viaImg();
+    }
+  });
+}
+
+/* ---- pipeline: one captured frame -> 1-2 pages of text ---- */
+async function ingestCanvas(canvas, label) {
+  setStatus('Finding pages\u2026');
+  const pageCanvases = splitSpread(canvas, state.mode);
+  const added = [];
+  for (let pi = 0; pi < pageCanvases.length; pi++) {
+    const pc = pageCanvases[pi];
+    setStatus('Reading ' + label + ' (' + (pi + 1) + '/' + pageCanvases.length + ')\u2026');
+    const lines = await ocrPage(pc, function (done, total) {
+      $('procBar').style.width = Math.round(100 * done / total) + '%';
+    });
+    const result = classifyPage(lines);
+    const st = spacingStats(orderLines(lines));
+    const paragraphs = buildParagraphs(result.kept, st);
+    const words = buildWords(paragraphs);
+    const page = {
+      id: Date.now() + '-' + Math.random().toString(36).slice(2, 7),
+      canvas: pc, paragraphs: paragraphs, words: words,
+      dropped: result.dropped, label: label + (pageCanvases.length > 1 ? (pi ? ' \u25b6' : ' \u25b6') : '')
+    };
+    added.push(page);
+    state.pages.push(page);
+  }
+  rebuildStream();
+  $('procBar').style.width = '0%';
+  const totalWords = added.reduce(function (s, p) { return s + p.words.length; }, 0);
+  setStatus(state.pages.length + ' page' + (state.pages.length === 1 ? '' : 's') + ' \u00b7 ' + state.words.length + ' words');
+  toast(label + ': ' + totalWords + ' words');
+}
+
+/* Book-level furniture: a short line that repeats at the top of several pages
+   is a running head (title/author). Geometric isolation already catches most
+   of them; this catches heads whose margins are tight — positive evidence is
+   the repetition itself, so a real paragraph is never dropped. */
+function stripRepeatedHeads() {
+  const seen = {};
+  for (const page of state.pages) {
+    if (!page.paragraphs.length) continue;
+    const first = page.paragraphs[0];
+    const norm = normalizeText(first.text).toLowerCase();
+    if (!norm || norm.length > 80) continue;
+    seen[norm] = (seen[norm] || 0) + 1;
+  }
+  for (const page of state.pages) {
+    if (!page.paragraphs.length) continue;
+    const norm = normalizeText(page.paragraphs[0].text).toLowerCase();
+    if (norm && norm.length <= 80 && seen[norm] > 1) {
+      page.headStripped = page.paragraphs.shift().text;
+      page.words = buildWords(page.paragraphs);
+    }
+  }
+}
+
+function rebuildStream() {
+  stripRepeatedHeads();
+  state.words = [];
+  for (const page of state.pages) {
+    for (const w of page.words) state.words.push(w);
+  }
+  normaliseTiming(state.words);
+  state.idx = Math.min(state.idx, Math.max(0, state.words.length - 1));
+  $('btnPlay').disabled = !state.words.length;
+}
+
+$('btnShot').onclick = async function () {
+  const frame = grabFrame();
+  if (!frame) return;
+  $('btnShot').disabled = true;
+  try { await ingestCanvas(frame, 'Capture'); }
+  finally { $('btnShot').disabled = false; }
+  switchView('pages'); renderPages();
+};
+
+$('fileInput').onchange = async function (e) {
+  const files = Array.from(e.target.files || []);
+  if (!files.length) return;
+  for (let i = 0; i < files.length; i++) {
+    try {
+      const canvas = await loadImageFile(files[i]);
+      await ingestCanvas(canvas, files[i].name.replace(/\.[^.]+$/, ''));
+    } catch (err) { toast('Could not read ' + files[i].name); }
+  }
+  e.target.value = '';
+  switchView('pages'); renderPages();
+};
+
+// Direct camera capture via the OS picker — works even where getUserMedia is
+// blocked (e.g. plain-HTTP phone browser). Also the path for iPad.
+$('shotInput').onchange = async function (e) {
+  const files = Array.from(e.target.files || []);
+  if (!files.length) return;
+  try {
+    const canvas = await loadImageFile(files[0]);
+    await ingestCanvas(canvas, 'Photo');
+    switchView('pages'); renderPages();
+  } catch (err) { toast('Could not read the photo'); }
+  e.target.value = '';
+};
+
+$('btnAddMore').onclick = function () { switchView('scan'); };
+$('btnRead').onclick = function () {
+  if (!state.words.length) { toast('No text yet — capture a page first'); return; }
+  switchView('read'); renderWord();
+};
+
+$('adaptiveToggle').onclick = function () {
+  state.adaptive = !state.adaptive;
+  this.classList.toggle('on', state.adaptive);
+  this.setAttribute('aria-checked', String(state.adaptive));
+  if (state.playing) scheduleNext();
+};
+
+$('modeSeg').onclick = function (e) {
+  const btn = e.target.closest('button[data-mode]');
+  if (!btn) return;
+  state.mode = btn.dataset.mode;
+  for (const b of $('modeSeg').children) b.classList.toggle('on', b === btn);
+};
+
+/* ---- page manager ---- */
+function renderPages() {
+  const list = $('pageList');
+  list.innerHTML = '';
+  if (!state.pages.length) {
+    list.innerHTML = '<p class="hint">No pages yet — scan or upload photos.</p>';
+    return;
+  }
+  state.pages.forEach(function (page, i) {
+    const card = document.createElement('div');
+    card.className = 'page-card';
+    const thumb = document.createElement('canvas');
+    thumb.width = 128; thumb.height = 168;
+    const tc = thumb.getContext('2d');
+    const s = Math.max(128 / page.canvas.width, 168 / page.canvas.height);
+    tc.drawImage(page.canvas, 0, 0, 128 / s, 168 / s);
+    const info = document.createElement('div');
+    info.className = 'info';
+    const preview = page.paragraphs.map(function (p) { return p.text; }).join(' ').slice(0, 90);
+    info.innerHTML = '<div class="t">Page ' + (i + 1) + ' \u00b7 ' + page.words.length +
+      ' words</div><div class="s"></div>';
+    info.querySelector('.s').textContent = preview || '(no text found)';
+    const acts = document.createElement('div');
+    acts.className = 'acts';
+    const up = document.createElement('button'); up.textContent = '\u25b2';
+    const down = document.createElement('button'); down.textContent = '\u25bc';
+    const del = document.createElement('button'); del.textContent = '\u2715';
+    up.onclick = function () {
+      if (i > 0) { const t = state.pages[i - 1]; state.pages[i - 1] = page; state.pages[i] = t; rebuildStream(); renderPages(); }
+    };
+    down.onclick = function () {
+      if (i < state.pages.length - 1) { const t = state.pages[i + 1]; state.pages[i + 1] = page; state.pages[i] = t; rebuildStream(); renderPages(); }
+    };
+    del.onclick = function () {
+      state.pages.splice(i, 1); rebuildStream(); renderPages();
+    };
+    acts.appendChild(up); acts.appendChild(down); acts.appendChild(del);
+    card.appendChild(thumb); card.appendChild(info); card.appendChild(acts);
+    list.appendChild(card);
+  });
+}
+
+/* ---- reader: black stage, ORP pivot, adaptive dwell averaging at WPM ---- */
+function renderWord() {
+  const disp = $('wordDisplay');
+  const words = state.words;
+  if (!words.length) { disp.textContent = '\u2014'; return; }
+  const w = words[state.idx];
+  disp.innerHTML = '';
+  const pivot = Math.min(w.pivot, w.text.length - 1);
+  if (pivot > 0) disp.appendChild(document.createTextNode(w.text.slice(0, pivot)));
+  const span = document.createElement('span');
+  span.className = 'piv';
+  span.textContent = w.text[pivot] || '';
+  disp.appendChild(span);
+  if (pivot + 1 < w.text.length) disp.appendChild(document.createTextNode(w.text.slice(pivot + 1)));
+  // auto-shrink for long words so nothing clips on a phone
+  const len = w.text.length;
+  const px = len > 12 ? state.fontPx * 0.55 : len > 9 ? state.fontPx * 0.7 : len > 6 ? state.fontPx * 0.85 : state.fontPx;
+  disp.style.fontSize = px + 'px';
+  $('metaPos').textContent = (state.idx + 1) + ' / ' + words.length;
+  $('metaWpm').textContent = state.wpm + ' wpm';
+  $('readBar').style.width = (100 * state.idx / words.length) + '%';
+}
+
+function scheduleNext() {
+  clearTimeout(state.timer);
+  if (!state.playing) return;
+  const words = state.words;
+  const base = 60000 / state.wpm;
+  const interval = state.adaptive ? base * words[state.idx].scale : base;
+  state.timer = setTimeout(function () {
+    if (!state.playing) return;
+    if (state.idx >= words.length - 1) {
+      state.playing = false;
+      $('btnPlay').textContent = 'Play';
+      toast('Finished!');
+      return;
+    }
+    state.idx++;
+    renderWord();
+    scheduleNext();
+  }, interval);
+}
+
+$('btnPlay').onclick = function () {
+  if (!state.words.length) return;
+  state.playing = !state.playing;
+  $('btnPlay').textContent = state.playing ? 'Pause' : 'Play';
+  if (state.playing) scheduleNext(); else clearTimeout(state.timer);
+};
+$('btnRestart').onclick = function () {
+  state.idx = 0; renderWord();
+  if (!state.playing) { state.playing = true; $('btnPlay').textContent = 'Pause'; }
+  scheduleNext();
+};
+$('btnSkip').onclick = function () {
+  state.idx = Math.min(state.idx + 10, state.words.length - 1);
+  renderWord(); if (state.playing) scheduleNext();
+};
+$('readerStage').onclick = function () { $('btnPlay').click(); };
+
+$('wpmRange').oninput = function (e) {
+  state.wpm = parseInt(e.target.value, 10);
+  $('wpmVal').textContent = state.wpm + ' wpm';
+  if (state.playing) scheduleNext();
+};
+$('sizeRange').oninput = function (e) {
+  state.fontPx = parseInt(e.target.value, 10);
+  $('sizeVal').textContent = state.fontPx + ' px';
+  renderWord();
+};
+
+// swipe left/right to move between words
+let touchX = null;
+$('readerStage').addEventListener('touchstart', function (e) {
+  touchX = e.changedTouches[0].clientX;
+}, { passive: true });
+$('readerStage').addEventListener('touchend', function (e) {
+  if (touchX === null) return;
+  const dx = e.changedTouches[0].clientX - touchX;
+  touchX = null;
+  if (Math.abs(dx) < 40) return;
+  state.idx = dx < 0 ? Math.min(state.idx + 1, state.words.length - 1)
+                     : Math.max(state.idx - 1, 0);
+  renderWord(); if (state.playing) scheduleNext();
+}, { passive: true });
+
+/* ---- boot ---- */
+(async function boot() {
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').catch(function () {});
+  }
+  renderWord(); renderPages();
+  try {
+    await loadModels(function (msg) { setStatus(msg + '\u2026'); });
+    setStatus('Ready \u00b7 PP-OCRv6 loaded');
+  } catch (err) {
+    setStatus('Model load failed \u2014 needs internet once');
+    toast('Could not load OCR models');
+  }
+})();
+</script>
+</body>
+</html>
