@@ -844,14 +844,19 @@ function b64Bytes(b64) {
   return bytes;
 }
 
+/* Plain fetch, no cache hint. `cache: 'force-cache'` looks like the right way
+   to ask "do not re-download 21 MB", but it happily returns a stale cached
+   response -- including a 404 cached during a moment when the file was not
+   deployed yet, which then pins the model to "missing" for good. Offline and
+   repeat loads are the service worker's job (it is cache-first for models). */
 async function getBytes(url) {
-  const res = await fetch(MODEL_BASE + url, { cache: 'force-cache' });
+  const res = await fetch(MODEL_BASE + url);
   if (!res.ok) throw new Error(url + ' -> ' + res.status);
   return res.arrayBuffer();
 }
 
 async function getText(url) {
-  const res = await fetch(MODEL_BASE + url, { cache: 'force-cache' });
+  const res = await fetch(MODEL_BASE + url);
   if (!res.ok) throw new Error(url + ' -> ' + res.status);
   return res.text();
 }
