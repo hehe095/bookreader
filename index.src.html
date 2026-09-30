@@ -579,6 +579,29 @@ function cropTo(canvas, x0, x1) {
   return c;
 }
 
+/* Otsu's threshold over a gray buffer: the split that maximises between-class
+   variance, which is the right answer for "bright paper on some other surface"
+   with no hard-coded brightness. Returns -1 when the histogram is degenerate. */
+function otsu(g) {
+  const hist = new Float32Array(256);
+  for (let i = 0; i < g.length; i++) hist[Math.min(255, g[i] | 0)]++;
+  const total = g.length;
+  let sum = 0;
+  for (let t = 0; t < 256; t++) sum += t * hist[t];
+  let sumB = 0, wB = 0, best = -1, thr = 128;
+  for (let t = 0; t < 256; t++) {
+    wB += hist[t];
+    if (!wB) continue;
+    const wF = total - wB;
+    if (!wF) break;
+    sumB += t * hist[t];
+    const mB = sumB / wB, mF = (sum - sumB) / wF;
+    const between = wB * wF * (mB - mF) * (mB - mF);
+    if (between > best) { best = between; thr = t; }
+  }
+  return best > 0 ? thr : -1;
+}
+
 /* Crop away the surface the page is lying on. A photo of a book or a letter is
    mostly table, and the gutter search, the text-column estimate and the
    detector's pixel budget all do better when the frame is paper. Detection is
@@ -602,23 +625,8 @@ function trimToContent(canvas) {
 
   // Paper is the bright side of a two-peaked histogram (page vs whatever it is
   // lying on), so Otsu picks the split without a hard-coded threshold.
-  const hist = new Float32Array(256);
-  for (let i = 0; i < g.length; i++) hist[Math.min(255, g[i] | 0)]++;
-  const total = g.length;
-  let sum = 0;
-  for (let t = 0; t < 256; t++) sum += t * hist[t];
-  let sumB = 0, wB = 0, best = -1, thr = 128;
-  for (let t = 0; t < 256; t++) {
-    wB += hist[t];
-    if (!wB) continue;
-    const wF = total - wB;
-    if (!wF) break;
-    sumB += t * hist[t];
-    const mB = sumB / wB, mF = (sum - sumB) / wF;
-    const between = wB * wF * (mB - mF) * (mB - mF);
-    if (between > best) { best = between; thr = t; }
-  }
-  if (best <= 0) return canvas;
+  const thr = otsu(g);
+  if (thr < 0) return canvas;
 
   const mask = new Uint8Array(w * h), seen = new Uint8Array(w * h);
   for (let i = 0; i < mask.length; i++) mask[i] = g[i] >= thr ? 1 : 0;
@@ -755,8 +763,431 @@ function deskewPage(page) {
   return rotateCanvas(page, skew);
 }
 
+/* ---- the page quad: corners of the paper, in the photo -------------------
+
+   Port of find_book_quad (pipeline/spread.py). Finding the paper's four
+   corners and warping them to a rectangle is what undoes keystone: photograph
+   a page from the side and the text lines converge towards the far edge, which
+   no later stage can fix, because the recogniser sees converging lines as
+   shorter glyphs and the detector's boxes tilt with them. */
+
+/* Convex hull of a point set (Andrew's monotone chain). */
+function convexHull(pts) {
+  const p = pts.slice().sort(function (a, b) { return a[0] - b[0] || a[1] - b[1]; });
+  const cross = function (o, a, b) { return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]); };
+  const lower = [];
+  for (const pt of p) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], pt) <= 0) lower.pop();
+    lower.push(pt);
+  }
+  const upper = [];
+  for (let i = p.length - 1; i >= 0; i--) {
+    const pt = p[i];
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], pt) <= 0) upper.pop();
+    upper.push(pt);
+  }
+  lower.pop(); upper.pop();
+  return lower.concat(upper);
+}
+
+/* Perimeter of a closed polygon. */
+function polyPerimeter(pts) {
+  let per = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], b = pts[(i + 1) % pts.length];
+    per += Math.hypot(b[0] - a[0], b[1] - a[1]);
+  }
+  return per;
+}
+
+/* Ramer–Douglas–Peucker: the smallest vertex set that keeps the shape. The Mac
+   uses cv2.approxPolyDP with a relaxed epsilon until the hull has exactly four
+   corners; same idea, one vertex count at a time. */
+function simplifyPoly(pts, eps) {
+  if (pts.length < 3) return pts.slice();
+  // distance from point c to segment ab
+  function segDist(c, a, b) {
+    const dx = b[0] - a[0], dy = b[1] - a[1];
+    const len2 = dx * dx + dy * dy;
+    const t = len2 ? Math.max(0, Math.min(1, ((c[0] - a[0]) * dx + (c[1] - a[1]) * dy) / len2)) : 0;
+    const px = a[0] + t * dx, py = a[1] + t * dy;
+    return Math.hypot(c[0] - px, c[1] - py);
+  }
+  // The hull is a closed ring, so no point is special: pin the two points
+  // farthest apart and simplify each of the two chains between them. Anchoring
+  // on first and last instead (the classic open-poly RDP) always keeps one
+  // extra vertex, because the closing edge gets an unpinned endpoint.
+  let i0 = 0, best = -1;
+  for (let i = 0; i < pts.length; i++) {
+    const d = Math.hypot(pts[i][0] - pts[0][0], pts[i][1] - pts[0][1]);
+    if (d > best) { best = d; i0 = i; }
+  }
+  let i1 = 0; best = -1;
+  for (let i = 0; i < pts.length; i++) {
+    const d = Math.hypot(pts[i][0] - pts[i0][0], pts[i][1] - pts[i0][1]);
+    if (d > best) { best = d; i1 = i; }
+  }
+  const keep = new Array(pts.length).fill(false);
+  keep[i0] = keep[i1] = true;
+  const stack = [];
+  // chain from i0 to i1 (ascending, wrapping)
+  const chain = [];
+  for (let i = i0; i !== i1; i = (i + 1) % pts.length) chain.push(i);
+  chain.push(i1);
+  stack.push(chain);
+  const chain2 = [];
+  for (let i = i1; i !== i0; i = (i + 1) % pts.length) chain2.push(i);
+  chain2.push(i0);
+  stack.push(chain2);
+  while (stack.length) {
+    const c = stack.pop();
+    if (c.length < 3) continue;
+    const a = pts[c[0]], b = pts[c[c.length - 1]];
+    let dmax = 0, idx = -1;
+    for (let k = 1; k < c.length - 1; k++) {
+      const d = segDist(pts[c[k]], a, b);
+      if (d > dmax) { dmax = d; idx = k; }
+    }
+    if (dmax > eps) {
+      keep[c[idx]] = true;
+      stack.push(c.slice(0, idx + 1), c.slice(idx));
+    }
+  }
+  return pts.filter(function (_, i) { return keep[i]; });
+}
+
+function orderQuad(pts) {
+  // top-left, top-right, bottom-right, bottom-left. TL/BR by the x+y diagonal;
+  // TR has the largest x-y, BL the smallest (the other diagonal runs the other
+  // way -- getting this backwards swaps TR and BL and the warp comes out
+  // rotated 90 degrees).
+  const total = [0, 0, 0, 0], diff = [0, 0, 0, 0];
+  let minSum = Infinity, maxSum = -Infinity, minDiff = Infinity, maxDiff = -Infinity;
+  for (let i = 0; i < 4; i++) {
+    total[i] = pts[i][0] + pts[i][1];
+    diff[i] = pts[i][0] - pts[i][1];
+    if (total[i] < minSum) minSum = total[i];
+    if (total[i] > maxSum) maxSum = total[i];
+    if (diff[i] < minDiff) minDiff = diff[i];
+    if (diff[i] > maxDiff) maxDiff = diff[i];
+  }
+  return [
+    pts[total.indexOf(minSum)], pts[diff.indexOf(maxDiff)],
+    pts[total.indexOf(maxSum)], pts[diff.indexOf(minDiff)]
+  ];
+}
+
+/* Horizontal morphological close (dilate then erode along x only): bridges the
+   binding shadow so a spread stays ONE bright region. Without it the spine -- a
+   vertical dark band wider than any square kernel we can afford -- divides the
+   blob and the quad latches onto a single page, silently dropping the other.
+   Closing along x only is the honest version of that bridge: a spine is narrow
+   and vertical, so a horizontal bridge is exactly the assumption needed, and
+   page edges (vertical too) survive because dilate and erode cancel except
+   across the gap. */
+function closeMaskX(mask, w, h, rx) {
+  const dil = new Uint8Array(mask.length);
+  for (let y = 0; y < h; y++) {
+    const row = y * w;
+    let on = 0;
+    for (let x = 0; x < w; x++) {
+      if (x - rx - 1 >= 0 && mask[row + x - rx - 1]) on--;
+      if (x + rx < w && mask[row + x + rx]) on++;
+      dil[row + x] = on > 0 ? 1 : 0;
+    }
+  }
+  const ero = new Uint8Array(mask.length);
+  for (let y = 0; y < h; y++) {
+    const row = y * w;
+    let on = 0;
+    for (let x = 0; x < w; x++) {
+      if (x - rx - 1 >= 0 && dil[row + x - rx - 1]) on--;
+      if (x + rx < w && dil[row + x + rx]) on++;
+      ero[row + x] = on === 2 * rx + 1 ? 1 : 0;
+    }
+  }
+  return ero;
+}
+
+/* Largest bright, four-sided region: the paper. Otsu finds bright-vs-rest (the
+   usual case -- paper on a desk); Canny edges closed into a solid mask find the
+   page when the surface it lies on is similarly toned. Both are optional
+   evidence and both are guarded: a candidate must be convex, cover a real
+   fraction of the frame, and simplify to four corners without absurd bending. */
+function findPageQuad(canvas) {
+  const scale = Math.min(1, 900 / Math.max(canvas.width, canvas.height));
+  const w = Math.max(32, Math.round(canvas.width * scale));
+  const h = Math.max(32, Math.round(canvas.height * scale));
+  if (w * h < 10000) return null;
+  const small = document.createElement('canvas');
+  small.width = w; small.height = h;
+  const sctx = small.getContext('2d', { willReadFrequently: true });
+  sctx.drawImage(canvas, 0, 0, w, h);
+  const gray = toGray(small);
+  const g = gray.g;
+
+  function blurPass(src, r) { return boxBlur(src, w, h, r); }
+  const blurred = blurPass(g, 4);
+
+  const masks = [];
+  const thr = otsu(blurred);
+  if (thr > 0) {
+    const m = new Uint8Array(w * h);
+    for (let i = 0; i < m.length; i++) m[i] = blurred[i] >= thr ? 1 : 0;
+    masks.push(closeMaskX(m, w, h, Math.max(2, Math.round(w * 0.04))));
+  }
+  // Edge mask: gradient magnitude of the blurred gray, closed into a solid
+  // region. The Mac uses Canny + a 13px close; a Sobel magnitude + threshold
+  // on the local 99th percentile behaves the same at this scale.
+  const mag = new Float32Array(w * h);
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const i = y * w + x;
+      const gx = blurred[i + 1] - blurred[i - 1];
+      const gy = blurred[i + w] - blurred[i - w];
+      mag[i] = Math.sqrt(gx * gx + gy * gy);
+    }
+  }
+  const em = new Uint8Array(w * h);
+  const sample = [];
+  for (let i = 0; i < mag.length; i += 7) sample.push(mag[i]);
+  sample.sort(function (a, b) { return a - b; });
+  const ethr = sample[Math.floor(sample.length * 0.93)] || 30;
+  for (let i = 0; i < em.length; i++) em[i] = mag[i] > ethr ? 1 : 0;
+  masks.push(em);
+
+  let best = null;
+  for (const mask of masks) {
+    // open: drop speckle; then the largest connected blob
+    const opened = new Uint8Array(mask.length);
+    // cheap opening: erode then dilate, 3x3, one pass each
+    const er = new Uint8Array(mask.length);
+    for (let y = 1; y < h - 1; y++) {
+      for (let x = 1; x < w - 1; x++) {
+        const i = y * w + x;
+        er[i] = mask[i] & mask[i - 1] & mask[i + 1] & mask[i - w] & mask[i + w];
+      }
+    }
+    for (let y = 1; y < h - 1; y++) {
+      for (let x = 1; x < w-1; x++) {
+        const i = y * w + x;
+        opened[i] = er[i] | er[i - 1] | er[i + 1] | er[i - w] | er[i + w];
+      }
+    }
+    const seen = new Uint8Array(mask.length);
+    const stack = [];
+    let bestBlob = null, bestArea = 0;
+    for (let start = 0; start < opened.length; start++) {
+      if (!opened[start] || seen[start]) continue;
+      let area = 0;
+      const pts = [];
+      seen[start] = 1; stack.push(start);
+      while (stack.length) {
+        const j = stack.pop();
+        const jx = j % w, jy = (j / w) | 0;
+        area++; pts.push([jx, jy]);
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const nx = jx + dx, ny = jy + dy;
+            if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+            const k = ny * w + nx;
+            if (opened[k] && !seen[k]) { seen[k] = 1; stack.push(k); }
+          }
+        }
+      }
+      if (area > bestArea) { bestArea = area; bestBlob = pts; }
+    }
+    if (!bestBlob || bestArea < w * h * 0.15) continue;
+
+    const hull = convexHull(bestBlob);
+    if (hull.length < 4) continue;
+    const per = polyPerimeter(hull);
+    let quad = null;
+    for (let k = 0; k < 10; k++) {
+      const eps = per * (0.010 + 0.005 * k);
+      const poly = simplifyPoly(hull, eps);
+      if (poly.length === 4) { quad = poly; break; }
+      // A perspective page is a general quad, and its hull often comes out with
+      // one extra vertex a few pixels from its neighbour -- the corner is
+      // slightly rounded by blur, or the page edge is not perfectly straight.
+      // Demanding exactly 4 vertices rejects those; merging the two closest
+      // adjacent vertices (when they are within 3% of the perimeter) recovers
+      // them. cv2.approxPolyDP does this implicitly.
+      if (poly.length === 5) {
+        let bi = -1, bd = Infinity;
+        for (let i = 0; i < 5; i++) {
+          const a = poly[i], b = poly[(i + 1) % 5];
+          const d = Math.hypot(b[0] - a[0], b[1] - a[1]);
+          if (d < bd) { bd = d; bi = i; }
+        }
+        if (bd < per * 0.05) {
+          const a = poly[bi], b = poly[(bi + 1) % 5];
+          quad = poly.slice();
+          quad[bi] = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+          quad.splice((bi + 1) % 5, 1);
+          break;
+        }
+      }
+      // If simplification skipped past 4, take the closest overshoot.
+      if (poly.length < 4) break;
+    }
+    if (quad == null) {
+      // minAreaRect fallback: the rotated bounding box, but only accept it if
+      // the region is page-shaped -- a long thin thing is a lamp edge, not paper.
+      let cx = 0, cy = 0;
+      for (const p of bestBlob) { cx += p[0]; cy += p[1]; }
+      cx /= bestBlob.length; cy /= bestBlob.length;
+      let axx = 0, axy = 0, ayy = 0;
+      for (const p of bestBlob) {
+        const dx = p[0] - cx, dy = p[1] - cy;
+        axx += dx * dx; axy += dx * dy; ayy += dy * dy;
+      }
+      const angle = 0.5 * Math.atan2(2 * axy, axx - ayy);
+      const c = Math.cos(angle), s = Math.sin(angle);
+      let uMin = Infinity, uMax = -Infinity, vMin = Infinity, vMax = -Infinity;
+      for (const p of bestBlob) {
+        const u = c * (p[0] - cx) + s * (p[1] - cy);
+        const v = -s * (p[0] - cx) + c * (p[1] - cy);
+        if (u < uMin) uMin = u; if (u > uMax) uMax = u;
+        if (v < vMin) vMin = v; if (v > vMax) vMax = v;
+      }
+      const rw = uMax - uMin, rh = vMax - vMin;
+      if (Math.max(rw, rh) / Math.max(1e-6, Math.min(rw, rh)) > 2.2) continue;
+      quad = orderQuad([
+        [cx + c * uMin - s * vMin, cy + s * uMin + c * vMin],
+        [cx + c * uMax - s * vMin, cy + s * uMax + c * vMin],
+        [cx + c * uMax - s * vMax, cy + s * uMax + c * vMax],
+        [cx + c * uMin - s * vMax, cy + s * uMin + c * vMax]
+      ]);
+    }
+    if (quad.length !== 4) continue;
+    // Convexity: all cross products of consecutive edges must share a sign.
+    let convex = true, sign = 0;
+    for (let i = 0; i < 4; i++) {
+      const a = quad[i], b = quad[(i + 1) % 4], d = quad[(i + 2) % 4];
+      const cr = (b[0] - a[0]) * (d[1] - b[1]) - (b[1] - a[1]) * (d[0] - b[0]);
+      if (Math.abs(cr) < 1e-9) { convex = false; break; }
+      const sg = cr > 0 ? 1 : -1;
+      if (sign === 0) sign = sg; else if (sg !== sign) { convex = false; break; }
+    }
+    if (!convex) continue;
+    const score = (bestArea / (w * h)) * Math.min(1, polyPerimeter(quad) / 1000);
+    if (!best || score > best.score) best = { score: score, quad: quad, scale: scale };
+  }
+  if (!best) return null;
+  // A quad that spans the whole frame is the mask blobbing page and background
+  // together (the desk is bright too, or the edge mask filled the frame). The
+  // trim path answers that case better -- cropping is safer than warping a
+  // rectangle we do not believe in. The measured samples behave exactly this
+  // way, and the Mac agrees: its finder returns the whole frame there too.
+  const qw = Math.max(best.quad[1][0], best.quad[2][0]) - Math.min(best.quad[0][0], best.quad[3][0]);
+  const qh = Math.max(best.quad[2][1], best.quad[3][1]) - Math.min(best.quad[0][1], best.quad[1][1]);
+  if (qw > w * 0.97 && qh > h * 0.97) return null;
+  // back to source pixels, dilated 2% so the warp does not clip the page edge
+  const q = best.quad.map(function (p) { return [p[0] / best.scale, p[1] / best.scale]; });
+  let cx = 0, cy = 0;
+  for (const p of q) { cx += p[0]; cy += p[1]; }
+  cx /= 4; cy /= 4;
+  return orderQuad(q.map(function (p) { return [cx + (p[0] - cx) * 1.02, cy + (p[1] - cy) * 1.02]; }));
+}
+
+/* Perspective warp: quad -> upright rectangle, true edge lengths preserved so
+   the page keeps its aspect. Port of rect() in pipeline/spread.py.
+
+   Done as a software warp over the destination pixels (inverse mapping with
+   bilinear sampling), not a canvas transform: canvas can only do affine, and a
+   keystone correction is projective. The 8x8 solve gives the dst->src map;
+   each output pixel is then two divisions and four weighted reads, so a
+   2600px page warps in a fraction of a second. */
+function warpQuad(canvas, quad, maxSide) {
+  const tl = quad[0], tr = quad[1], br = quad[2], bl = quad[3];
+  const width = Math.max(Math.hypot(tr[0] - tl[0], tr[1] - tl[1]), Math.hypot(br[0] - bl[0], br[1] - bl[1]));
+  const height = Math.max(Math.hypot(bl[0] - tl[0], bl[1] - tl[1]), Math.hypot(br[0] - tr[0], br[1] - tr[1]));
+  let outW = Math.max(8, Math.round(width)), outH = Math.max(8, Math.round(height));
+  if (maxSide) {
+    const longest = Math.max(outW, outH);
+    if (longest > maxSide) { const k = maxSide / longest; outW = Math.round(outW * k); outH = Math.round(outH * k); }
+  }
+  if (outW * outH > 7e6) {
+    const k = Math.sqrt(7e6 / (outW * outH));
+    outW = Math.max(8, Math.round(outW * k)); outH = Math.max(8, Math.round(outH * k));
+  }
+
+  // The map we need is rect -> quad (for each output pixel, where does it
+  // sample?), so the arguments go destination-first. quadToQuad(quad, dst)
+  // would be the forward map, and evaluating it at rect coordinates smears the
+  // page across the whole output.
+  const inv = quadToQuad([[0, 0], [outW - 1, 0], [outW - 1, outH - 1], [0, outH - 1]], quad);
+  if (!inv) return null;
+
+  const sctx = canvas.getContext('2d', { willReadFrequently: true });
+  const sw = canvas.width, sh = canvas.height;
+  const src = sctx.getImageData(0, 0, sw, sh).data;
+  const out = new ImageData(outW, outH);
+  const dst = out.data;
+  for (let y = 0; y < outH; y++) {
+    for (let x = 0; x < outW; x++) {
+      const denom = inv[6] * x + inv[7] * y + 1;
+      const u = (inv[0] * x + inv[1] * y + inv[2]) / denom;
+      const v = (inv[3] * x + inv[4] * y + inv[5]) / denom;
+      const o = (y * outW + x) * 4;
+      if (u < 0 || v < 0 || u > sw - 1 || v > sh - 1) { dst[o + 3] = 255; continue; }
+      const ux = Math.min(sw - 2, Math.max(0, u | 0)), vy = Math.min(sh - 2, Math.max(0, v | 0));
+      const fx = u - ux, fy = v - vy;
+      const i00 = (vy * sw + ux) * 4, i10 = i00 + 4, i01 = i00 + sw * 4, i11 = i01 + 4;
+      const w00 = (1 - fx) * (1 - fy), w10 = fx * (1 - fy), w01 = (1 - fx) * fy, w11 = fx * fy;
+      dst[o]     = src[i00]     * w00 + src[i10]     * w10 + src[i01]     * w01 + src[i11]     * w11;
+      dst[o + 1] = src[i00 + 1] * w00 + src[i10 + 1] * w10 + src[i01 + 1] * w01 + src[i11 + 1] * w11;
+      dst[o + 2] = src[i00 + 2] * w00 + src[i10 + 2] * w10 + src[i01 + 2] * w01 + src[i11 + 2] * w11;
+      dst[o + 3] = 255;
+    }
+  }
+  const c = document.createElement('canvas');
+  c.width = outW; c.height = outH;
+  c.getContext('2d').putImageData(out, 0, 0);
+  return c;
+}
+
+/* Homography taking 4 source points to 4 destination points, solved exactly
+   (DLT with Gaussian elimination). Returns null for degenerate quads. Called
+   with the arguments swapped it gives dst -> src, which is what warpQuad needs
+   for inverse mapping. */
+function quadToQuad(src, dst) {
+  const A = [], b = [];
+  for (let i = 0; i < 4; i++) {
+    const s = src[i], d = dst[i];
+    A.push([s[0], s[1], 1, 0, 0, 0, -d[0] * s[0], -d[0] * s[1]]); b.push(d[0]);
+    A.push([0, 0, 0, s[0], s[1], 1, -d[1] * s[0], -d[1] * s[1]]); b.push(d[1]);
+  }
+  for (let col = 0; col < 8; col++) {
+    let piv = col;
+    for (let r = col + 1; r < 8; r++) if (Math.abs(A[r][col]) > Math.abs(A[piv][col])) piv = r;
+    if (Math.abs(A[piv][col]) < 1e-10) return null;
+    const t = A[col]; A[col] = A[piv]; A[piv] = t;
+    const tb = b[col]; b[col] = b[piv]; b[piv] = tb;
+    for (let r = col + 1; r < 8; r++) {
+      const f = A[r][col] / A[col][col];
+      for (let c2 = col; c2 < 8; c2++) A[r][c2] -= f * A[col][c2];
+      b[r] -= f * b[col];
+    }
+  }
+  const h = new Float64Array(8);
+  for (let r = 7; r >= 0; r--) {
+    let s = b[r];
+    for (let c2 = r + 1; c2 < 8; c2++) s -= A[r][c2] * h[c2];
+    h[r] = s / A[r][r];
+  }
+  return h;
+}
+
+/* The full stage on a captured photo: find the paper's corners, warp them to
+   an upright page, then split and deskew as before. Without a convincing quad
+   the old trim path answers, which is the code that has always handled a flat,
+   straight-on shot -- the two paths agree there, so the quad can only add,
+   never subtract. */
 function splitSpread(canvas, mode) {
-  const frame = trimToContent(canvas);
+  const quad = findPageQuad(canvas);
+  const frame = (quad && warpQuad(canvas, quad, 2600)) || trimToContent(canvas);
   let split = null;
   if (mode !== 'single') split = findGutter(frame);
   if (split == null) {
@@ -765,6 +1196,7 @@ function splitSpread(canvas, mode) {
   }
   return [deskewPage(cropTo(frame, 0, split)), deskewPage(cropTo(frame, split, frame.width))];
 }
+
 /* ============ OCR: PP-OCRv6 via onnxruntime-web (port of pipeline/ocr.py) ============ */
 const DET_MEAN = [0.485, 0.456, 0.406], DET_STD = [0.229, 0.224, 0.225];
 // Matches the Mac pipeline (pipeline/ocr.py). 2560 keeps body text at 20-30px

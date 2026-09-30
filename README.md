@@ -109,6 +109,19 @@ python3 build.py
 
 ## Notes
 
+- **Perspective rectification.** Before splitting, the app looks for the
+  paper's four corners (Otsu on the blurred gray, bridged across the spine by a
+  horizontal morphological close; largest convex four-sided blob) and warps them
+  to an upright page — a true projective warp, done as an inverse-mapped pixel
+  loop with bilinear sampling, since canvas transforms are only affine. This is
+  what undoes keystone: photograph a page from the side and the text lines
+  converge, which the recogniser reads as shorter glyphs. Measured on a synthetic
+  page photographed in perspective (true corners known): corners found within
+  6px, and word error drops to 1/52 against 3/52 for the un-rectified path.
+  Without a convincing quad the old trim path answers unchanged — a flat,
+  straight-on shot never regresses, and a quad that spans the whole frame is
+  rejected as degenerate (the trim path crops better than a warp we do not
+  believe in).
 - OCR = PP-OCRv6 via onnxruntime-web (WASM), so it works on any iPhone, no
   server. The detector is always the tiny one (1.7 MB); the recogniser is the
   better `small` one (21 MB) when the network has it, tiny (4.3 MB, inlined)
