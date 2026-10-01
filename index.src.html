@@ -553,27 +553,30 @@ function findGutter(canvas) {
   // Reject if the "gutter" is not actually a local minimum of brightness:
   // on a spread with no visible spine, the darkest column is somewhere
   // random and splitting there would cut through text.
-  const b4 = band * 4;
-  let lsum = 0, ln = 0;
-  for (let x = Math.max(0, split - b4); x < Math.min(w, split + b4); x++) { lsum += bs[x]; ln++; }
-  if (bs[split] > (lsum / ln) * 0.995) return null;
-  // A gutter should be measurably darker than the text pages around it.
-  // Judge that against the search window, not the whole frame: a dark object
-  // elsewhere in the photo (another book, a table edge) must not drag the
-  // global mean low enough to reject a real spine.
-  let wsum = 0, wn = 0, inks = [];
-  for (let x = lo; x < hi; x++) { wsum += bs[x]; wn++; }
-  const winMedianB = wsum / wn;
-  if (bs[split] > winMedianB * 0.95) return null;
-  // ...and the ink channel should be emptier than typical text columns.
-  for (let x = lo; x < hi; x++) inks.push(ins[x]);
-  inks.sort(function (a, b) { return a - b; });
-  const winMedianInk = inks[Math.floor(inks.length / 2)];
-  if (ins[split] > winMedianInk * 0.7) return null;
+  if (!gutterPlausible(bs, ins, split, lo, hi, band * 4)) return null;
   const ch = channel(split);
   if (!sidesLookLikePages(ch.a, ch.b)) return null;
   if (ch.width >= Math.max(3, Math.round(w * 0.015))) return ch.mid;
   return split;
+}
+
+/* A gutter candidate must beat three checks, all judged against the search
+   window rather than the whole frame: it is a local brightness minimum, it is
+   darker than the text pages around it, and its ink channel is emptier than a
+   typical text column. Whole-frame comparisons fail when a dark object sits
+   elsewhere in the photo (another book, a table edge): it drags the global
+   mean down and rejects a perfectly good spine. */
+function gutterPlausible(bs, ins, split, lo, hi, b4) {
+  let lsum = 0, ln = 0;
+  for (let x = Math.max(0, split - b4); x < split + b4; x++) { lsum += bs[x]; ln++; }
+  if (bs[split] > (lsum / ln) * 0.995) return false;
+  let wsum = 0;
+  const inks = [];
+  for (let x = lo; x < hi; x++) { wsum += bs[x]; inks.push(ins[x]); }
+  if (bs[split] > (wsum / inks.length) * 0.95) return false;
+  inks.sort(function (a, b) { return a - b; });
+  if (ins[split] > inks[inks.length >> 1] * 0.7) return false;
+  return true;
 }
 
 function cropTo(canvas, x0, x1) {
@@ -862,6 +865,20 @@ function simplifyPoly(pts, eps) {
   return pts.filter(function (_, i) { return keep[i]; });
 }
 
+/* True when opposite edges of a quad point within `tol` of the same
+   direction (mod 180°, so near-vertical edges at ±89° compare as 2° apart).
+   Opposite edges of a perspective rectangle skew together; disagreement means
+   a corner was eaten by an occlusion, and the quad is not trustworthy. */
+const SLOPE_TOL = 20 * Math.PI / 180;
+function oppositeSlopesAgree(edge, tol) {
+  function gap(a, b) {
+    let d = Math.abs(edge[a] - edge[b]);
+    if (d > Math.PI) d = 2 * Math.PI - d;
+    return Math.min(d, Math.abs(Math.PI - d));
+  }
+  return gap(0, 2) <= tol && gap(1, 3) <= tol;
+}
+
 function orderQuad(pts) {
   // top-left, top-right, bottom-right, bottom-left. TL/BR by the x+y diagonal;
   // TR has the largest x-y, BL the smallest (the other diagonal runs the other
@@ -1077,8 +1094,8 @@ function findPageQuad(canvas) {
       if (sign === 0) sign = sg; else if (sg !== sign) { convex = false; break; }
     }
     if (!convex) continue;
-    // Sanity: a real keystone skews both side edges the same way, so their
-    // slopes stay within ~20 degrees of each other. A segmentation glitch --
+    // A real keystone skews both side edges the same way, so opposite edges'
+    // slopes stay within SLOPE_TOL of each other. A segmentation glitch --
     // something occluding one page corner -- tilts one edge wildly while its
     // opposite stays straight. Trusting that quad warps away a strip of text.
     const edge = [];
@@ -1086,15 +1103,7 @@ function findPageQuad(canvas) {
       const a = quad[i], b = quad[(i + 1) % 4];
       edge.push(Math.atan2(b[1] - a[1], b[0] - a[0]));
     }
-    const oppositeGap = function (a, b) {
-      let d = Math.abs(edge[a] - edge[b]);
-      if (d > Math.PI) d = 2 * Math.PI - d;
-      // near-vertical edges wrap around +-90 degrees; unwrap so 89 and -89
-      // degrees compare as 2 degrees apart, not 178.
-      return Math.min(d, Math.abs(Math.PI - d));
-    };
-    const slopeTol = 20 * Math.PI / 180;
-    if (oppositeGap(0, 2) > slopeTol || oppositeGap(1, 3) > slopeTol) continue;
+    if (!oppositeSlopesAgree(edge, SLOPE_TOL)) continue;
     const score = (bestArea / (w * h)) * Math.min(1, polyPerimeter(quad) / 1000);
     if (!best || score > best.score) best = { score: score, quad: quad, scale: scale };
   }
