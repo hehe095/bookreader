@@ -121,7 +121,20 @@ python3 build.py
   Without a convincing quad the old trim path answers unchanged — a flat,
   straight-on shot never regresses, and a quad that spans the whole frame is
   rejected as degenerate (the trim path crops better than a warp we do not
-  believe in).
+  believe in). A quad is also rejected when one edge's slope wildly disagrees
+  with its opposite (both side edges of a real keystone tilt the same way);
+  that pattern means something occluded a page corner, and trusting the warp
+  would slice off text.
+- **Gutter split, window-relative checks.** The spine must be darker and its
+  ink channel emptier than the *text pages around it*, not the whole frame — a
+  dark second book elsewhere in the photo must not drag the global mean and
+  reject a real gutter (this exact failure shipped, cut a spread at the
+  midpoint and interleaved two pages).
+- **Furniture classifier, block-shape rules.** A running head is one to three
+  lines and overwhelmingly capitals (`isTitleish`); mixed-case prose above the
+  body is verse or a continuation and is kept. Below the body the same size
+  rule applies — a footer is small, a twelve-line block is a second section.
+  Dropping real text is worse than keeping an occasional chapter heading.
 - OCR = PP-OCRv6 via onnxruntime-web (WASM), so it works on any iPhone, no
   server. The detector is always the tiny one (1.7 MB); the recogniser is the
   better `small` one (21 MB) when the network has it, tiny (4.3 MB, inlined)

@@ -557,13 +557,19 @@ function findGutter(canvas) {
   let lsum = 0, ln = 0;
   for (let x = Math.max(0, split - b4); x < Math.min(w, split + b4); x++) { lsum += bs[x]; ln++; }
   if (bs[split] > (lsum / ln) * 0.995) return null;
-  // A gutter should be measurably darker than the page beside it.
-  let mean = 0; for (let x = 0; x < w; x++) mean += bs[x]; mean /= w;
-  if (bs[split] > mean * 0.9) return null;
-  // ...and text must not run straight through it. A shadow falling across one
-  // column of text darkens it exactly like a spine does; the difference is
-  // that every line still crosses it.
-  if (ins[split] > 0.6) return null;
+  // A gutter should be measurably darker than the text pages around it.
+  // Judge that against the search window, not the whole frame: a dark object
+  // elsewhere in the photo (another book, a table edge) must not drag the
+  // global mean low enough to reject a real spine.
+  let wsum = 0, wn = 0, inks = [];
+  for (let x = lo; x < hi; x++) { wsum += bs[x]; wn++; }
+  const winMedianB = wsum / wn;
+  if (bs[split] > winMedianB * 0.95) return null;
+  // ...and the ink channel should be emptier than typical text columns.
+  for (let x = lo; x < hi; x++) inks.push(ins[x]);
+  inks.sort(function (a, b) { return a - b; });
+  const winMedianInk = inks[Math.floor(inks.length / 2)];
+  if (ins[split] > winMedianInk * 0.7) return null;
   const ch = channel(split);
   if (!sidesLookLikePages(ch.a, ch.b)) return null;
   if (ch.width >= Math.max(3, Math.round(w * 0.015))) return ch.mid;
@@ -1071,6 +1077,24 @@ function findPageQuad(canvas) {
       if (sign === 0) sign = sg; else if (sg !== sign) { convex = false; break; }
     }
     if (!convex) continue;
+    // Sanity: a real keystone skews both side edges the same way, so their
+    // slopes stay within ~20 degrees of each other. A segmentation glitch --
+    // something occluding one page corner -- tilts one edge wildly while its
+    // opposite stays straight. Trusting that quad warps away a strip of text.
+    const edge = [];
+    for (let i = 0; i < 4; i++) {
+      const a = quad[i], b = quad[(i + 1) % 4];
+      edge.push(Math.atan2(b[1] - a[1], b[0] - a[0]));
+    }
+    const oppositeGap = function (a, b) {
+      let d = Math.abs(edge[a] - edge[b]);
+      if (d > Math.PI) d = 2 * Math.PI - d;
+      // near-vertical edges wrap around +-90 degrees; unwrap so 89 and -89
+      // degrees compare as 2 degrees apart, not 178.
+      return Math.min(d, Math.abs(Math.PI - d));
+    };
+    const slopeTol = 20 * Math.PI / 180;
+    if (oppositeGap(0, 2) > slopeTol || oppositeGap(1, 3) > slopeTol) continue;
     const score = (bestArea / (w * h)) * Math.min(1, polyPerimeter(quad) / 1000);
     if (!best || score > best.score) best = { score: score, quad: quad, scale: scale };
   }
@@ -1717,6 +1741,21 @@ function alnumCount(text) {
   return n;
 }
 
+/* Running heads and titles are overwhelmingly capitals; body prose is not. */
+function isTitleish(text) {
+  let letters = 0, upper = 0;
+  for (const ch of text) {
+    if (ch >= 'a' && ch <= 'z') letters++;
+    else if (ch >= 'A' && ch <= 'Z') { letters++; upper++; }
+  }
+  return letters > 0 && upper / letters >= 0.6;
+}
+
+/* A running head is one line; a chapter heading is rarely more than three.
+   A larger isolated block above/below the body is real content (verse, a
+   speech, an epigraph), never furniture. */
+const MAX_HEAD_BLOCK_LINES = 3;
+
 /* Body is the default; a furniture label needs positive evidence. Deleting a
    paragraph is unrecoverable, a stray page number is minor. */
 function classifyPage(lines) {
@@ -1744,6 +1783,8 @@ function classifyPage(lines) {
   }
 
   const bodySet = new Set(body);
+  const blockOf = new Map();
+  for (const b of blocks) for (const l of b) blockOf.set(l, b);
   const colX0 = median(body.map(lineX0)), colX1 = median(body.map(lineX1));
   const bodyY0 = Math.min.apply(null, body.map(lineY0));
   const bodyY1 = Math.max.apply(null, body.map(lineY1));
@@ -1770,11 +1811,20 @@ function classifyPage(lines) {
       else if (!inBody) {
         const above = lineY1(line) <= bodyY0 + st.height * 0.5;
         const below = lineY0(line) >= bodyY1 - st.height * 0.5;
+        const blk = blockOf.get(line);
+        const smallBlock = !blk || blk.length <= MAX_HEAD_BLOCK_LINES;
         if (above) {
           const gap = Math.max(0, bodyY0 - lineY1(line));
-          if (gap > isolated) { label = 'running_head'; reason = 'isolated in top margin'; }
+          const bigBlock = !smallBlock && blk.some(function (l) { return isTitleish(l.text.trim()); });
+          if (!smallBlock && !bigBlock) { label = 'body'; reason = 'multi-line block above the body'; }
+          else if (gap > isolated && isTitleish(text)) { label = 'running_head'; reason = 'isolated title in top margin'; }
+          else if (gap > isolated && !bigBlock) { label = 'body'; reason = 'prose block above the body'; }
+          else if (!smallBlock || bigBlock) { label = 'body'; reason = 'multi-line block above the body'; }
           else { label = 'heading'; reason = 'adjacent to body text'; }
-        } else if (below) { label = 'footer'; reason = 'below the body text'; }
+        } else if (below) {
+          if (!smallBlock) { label = 'body'; reason = 'multi-line block below the body'; }
+          else { label = 'footer'; reason = 'below the body text'; }
+        }
         else { label = 'body'; reason = 'inside the body column'; }
       }
     }
