@@ -1621,11 +1621,94 @@ function ctcDecode(chars, logits, T, V) {
   return { text: text, confidence: probs.length ? conf / probs.length : 0 };
 }
 
+/* Near the spine of a curled page the text lines tilt by 10-15 degrees, and
+   the detector's probability map bridges neighbouring rows into ONE box twice
+   the glyph height. The recogniser then squashes two lines into 48 pixels and
+   reads out an interleaved mash. Catch those boxes here: a box much thicker
+   than the page's median line is probably merged, so rotate the page level
+   about the box centre, take a tall window, find the separate ink rows inside
+   it, and return one box per row. */
+function splitMergedBoxes(canvas, boxes) {
+  if (boxes.length < 4) return boxes;
+  const thick = boxes.map(function (b) { return b.thickness; }).sort(function (a, b) { return a - b; });
+  const medThick = thick[thick.length >> 1];
+  const out = [];
+  // Merged boxes are exactly where the detector stumbles, so it may emit TWO
+  // of them over the same rows. Splitting both would recognise every line
+  // twice with slightly different alignment -- duplicated, shifting text.
+  // Track the row centres each split produces and skip a later box whose
+  // rows are already covered.
+  const emittedRows = [];
+  function rowsCovered(cy) {
+    return emittedRows.some(function (y) { return Math.abs(y - cy) < medThick * 0.55; });
+  }
+  for (const b of boxes) {
+    const merged = b.thickness > medThick * 1.35 && b.length > medThick * 4;
+    if (!merged) { out.push(b); continue; }
+    const level = document.createElement('canvas');
+    level.width = canvas.width; level.height = canvas.height;
+    const lctx = level.getContext('2d', { willReadFrequently: true });
+    lctx.fillStyle = '#fff'; lctx.fillRect(0, 0, level.width, level.height);
+    lctx.translate(b.cx, b.cy); lctx.rotate(-b.angle); lctx.translate(-b.cx, -b.cy);
+    lctx.drawImage(canvas, 0, 0);
+    const winH = Math.round(b.thickness * 3);
+    const x0 = Math.max(0, Math.round(b.cx - b.length / 2));
+    const y0 = Math.max(0, Math.round(b.cy - winH / 2));
+    const w = Math.min(level.width - x0, Math.round(b.length));
+    const h = Math.min(level.height - y0, winH);
+    const win = document.createElement('canvas');
+    win.width = w; win.height = h;
+    win.getContext('2d').drawImage(level, x0, y0, w, h, 0, 0, w, h);
+    const im = win.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, w, h).data;
+    const dark = new Array(h);
+    for (let y = 0; y < h; y++) {
+      let n = 0;
+      for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 4;
+        if ((im[i] + im[i + 1] + im[i + 2]) / 3 < 110) n++;
+      }
+      dark[y] = n;
+    }
+    const runs = [];
+    let s = -1;
+    for (let y = 0; y < h; y++) {
+      if (dark[y] > 8 && s < 0) s = y;
+      if (dark[y] <= 8 && s >= 0) { if (y - s >= medThick * 0.5) runs.push([s, y - 1]); s = -1; }
+    }
+    if (s >= 0 && h - s >= medThick * 0.5) runs.push([s, h - 1]);
+    if (runs.length < 2) { out.push(b); continue; }
+    let emitted = 0;
+    for (const r of runs) {
+      const cy = y0 + (r[0] + r[1]) / 2;
+      if (rowsCovered(cy)) continue;   // another merged box already produced this row
+      emittedRows.push(cy);
+      // The row is axis-aligned only on `level`; cropLine must read from there.
+      out.push({ cx: b.cx, cy: cy, length: b.length,
+                 thickness: r[1] - r[0] + 1, angle: 0, _level: level });
+      emitted++;
+    }
+    // Every run was already covered: this box adds nothing new.
+    if (!emitted && runs.length) continue;
+  }
+  // Plain boxes sitting where a split already produced a clean row are the
+  // detector firing twice over the same lines; keep the split's version
+  // (levelled, single-row) and drop the plain one.
+  return out.filter(function (b) {
+    if (b._level) return true;
+    return !rowsCovered(b.cy);
+  });
+}
+
 async function readLines(canvas, boxes) {
   const engine = recEngine;   // one snapshot for the whole line
   const results = [];
-  for (let i = 0; i < boxes.length; i++) {
-    const crop = cropLine(canvas, boxes[i]);
+  const expanded = splitMergedBoxes(canvas, boxes);
+  for (let i = 0; i < expanded.length; i++) {
+    // A split row is straight on its own levelled copy of the page, not on
+    // the original -- cropping the original there would grab two tilted rows.
+    const crop = expanded[i]._level
+      ? cropLine(expanded[i]._level, expanded[i])
+      : cropLine(canvas, expanded[i]);
     const feeds = {};
     feeds[engine.session.inputNames[0]] = recPreprocess(crop);
     const out = await engine.session.run(feeds);
@@ -1635,9 +1718,9 @@ async function readLines(canvas, boxes) {
     if (r.text.trim()) {
       results.push({
         text: r.text, confidence: r.confidence,
-        cx: boxes[i].cx, cy: boxes[i].cy,
-        length: boxes[i].length, thickness: boxes[i].thickness,
-        angle: boxes[i].angle
+        cx: expanded[i].cx, cy: expanded[i].cy,
+        length: expanded[i].length, thickness: expanded[i].thickness,
+        angle: expanded[i].angle
       });
     }
   }
@@ -1645,7 +1728,9 @@ async function readLines(canvas, boxes) {
 }
 
 async function ocrPage(canvas, onProgress) {
-  const boxes = await detect(canvas);
+  // One pass over all boxes: the merged-row split needs the page's median box
+  // height, which only exists when the whole batch is in hand.
+  const boxes = splitMergedBoxes(canvas, await detect(canvas));
   const lines = [];
   for (let i = 0; i < boxes.length; i++) {
     const one = await readLines(canvas, [boxes[i]]);
